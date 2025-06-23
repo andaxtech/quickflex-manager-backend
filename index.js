@@ -88,7 +88,7 @@ app.post('/api/verify-store', async (req, res) => {
   }
 });
 
-/// ✅ Get blocks for a specific store
+// ✅ Get blocks for a specific store
 app.get('/api/store/:storeId/blocks', async (req, res) => {
   const { storeId } = req.params;
 
@@ -97,6 +97,19 @@ app.get('/api/store/:storeId/blocks', async (req, res) => {
   }
 
   try {
+    // Step 1: Get the location_id for the store_id
+    const locResult = await pool.query(
+      'SELECT location_id FROM locations WHERE store_id = $1',
+      [storeId]
+    );
+
+    if (locResult.rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'Store not found' });
+    }
+
+    const locationId = locResult.rows[0].location_id;
+
+    // Step 2: Use location_id to fetch blocks
     const query = `
       SELECT 
         b.block_id,
@@ -114,6 +127,7 @@ app.get('/api/store/:storeId/blocks', async (req, res) => {
         d.license_number,
         d.license_expiration,
         d.registration_date,
+        i.start_date AS insurance_start,
         i.end_date AS insurance_end
       FROM blocks AS b
       LEFT JOIN block_claims AS bc ON b.block_id = bc.block_id
@@ -122,7 +136,7 @@ app.get('/api/store/:storeId/blocks', async (req, res) => {
       WHERE b.location_id = $1
     `;
 
-    const result = await pool.query(query, [storeId]);
+    const result = await pool.query(query, [locationId]);
 
     const blocks = result.rows.map((row) => ({
       blockId: row.block_id,
@@ -151,7 +165,6 @@ app.get('/api/store/:storeId/blocks', async (req, res) => {
     res.status(500).json({ success: false, message: 'Internal server error', error: err.message });
   }
 });
-
 
 
 
