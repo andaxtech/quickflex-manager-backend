@@ -24,13 +24,16 @@ app.post('/api/verify-store', async (req, res) => {
     return res.status(400).json({ success: false, message: 'Missing required fields' });
   }
 
-  // 🛡️ Ensure storeId is a 4-digit numeric string
+  // 🛡️ Validate storeId: must be exactly 4 digits
   if (!/^\d{4}$/.test(storeId)) {
-    return res.status(400).json({ success: false, message: 'Store ID must be a 4-digit number' });
+    return res.status(400).json({
+      success: false,
+      message: 'Store ID must be a 4-digit number',
+    });
   }
 
   try {
-    // 🔍 Validate against locations table
+    // 🔍 Check if store exists with matching FCODE (case-insensitive)
     const checkQuery = `
       SELECT store_id, city FROM locations
       WHERE store_id = $1 AND LOWER(fcode) = LOWER($2)
@@ -64,7 +67,7 @@ app.post('/api/verify-store', async (req, res) => {
       });
     }
 
-    // ➕ Insert link
+    // ➕ Insert into manager_store_links
     const insertQuery = `
       INSERT INTO manager_store_links (manager_id, store_id, added_at)
       VALUES ($1, $2, NOW())
@@ -79,7 +82,6 @@ app.post('/api/verify-store', async (req, res) => {
       },
       message: 'Store successfully linked to manager',
     });
-
   } catch (err) {
     console.error('❌ Error in /api/verify-store:', err);
     res.status(500).json({ success: false, message: 'Internal server error' });
