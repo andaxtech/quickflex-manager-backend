@@ -122,7 +122,7 @@ app.get('/api/store/:storeId/blocks', async (req, res) => {
       LEFT JOIN insurance_details i ON i.driver_id = d.id
       WHERE b.location_id = $1
     `;
-    
+
     const result = await pool.query(query, [storeId]);
 
     const blocks = result.rows.map((row) => ({
@@ -135,23 +135,24 @@ app.get('/api/store/:storeId/blocks', async (req, res) => {
       claimTime: row.claim_time,
       driver: row.driver_id
         ? {
-            fullName: `${row.first_name} ${row.last_name}`,
-            phone: row.phone_number,
-            email: row.email,
-            licenseNumber: row.license_number,
-            licenseValid: new Date(row.license_expiration) > new Date(),
-            registrationValid: new Date(row.registration_expiration) > new Date(),
-            insuranceValid: new Date(row.insurance_end) > new Date(),
+            fullName: `${row.first_name ?? ''} ${row.last_name ?? ''}`.trim(),
+            phone: row.phone_number ?? '',
+            email: row.email ?? '',
+            licenseNumber: row.license_number ?? '',
+            licenseValid: row.license_expiration ? new Date(row.license_expiration) > new Date() : false,
+            registrationValid: row.registration_expiration ? new Date(row.registration_expiration) > new Date() : false,
+            insuranceValid: row.insurance_end ? new Date(row.insurance_end) > new Date() : false,
           }
         : undefined,
     }));
 
     res.json({ success: true, blocks });
   } catch (err) {
-    console.error('❌ Error fetching store blocks:', err);
+    console.error('❌ Error fetching store blocks:', err.stack); // <– shows full trace
     res.status(500).json({ success: false, message: 'Internal server error' });
   }
 });
+
 
 // ✅ Get stores linked to manager
 app.get('/api/my-stores', async (req, res) => {
