@@ -146,7 +146,7 @@ app.get('/api/store/:storeId/blocks', async (req, res) => {
       amount: row.amount,
       status: row.status,
       claimTime: row.claim_time,
-      driver: row.driver_id
+      //driver: row.driver_id
         ? {
             fullName: `${row.first_name} ${row.last_name}`,
             phone: row.phone_number,
