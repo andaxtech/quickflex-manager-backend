@@ -24,10 +24,17 @@ app.post('/api/verify-store', async (req, res) => {
     return res.status(400).json({ success: false, message: 'Missing required fields' });
   }
 
+  // ✅ Validate storeId: must be 4-digit numeric
+  const storeIdStr = String(storeId);
+  if (!/^\d{4}$/.test(storeIdStr)) {
+    return res.status(400).json({ success: false, message: 'Store ID must be a 4-digit number' });
+  }
+
   try {
+    // 🔐 Verify storeId and FCODE match (case-insensitive)
     const checkQuery = `
-      SELECT store_id AS id, city FROM locations
-      WHERE store_id = $1 AND fcode = $2
+      SELECT store_id, city FROM locations
+      WHERE store_id = $1 AND LOWER(fcode) = LOWER($2)
     `;
     const checkResult = await pool.query(checkQuery, [storeId, fcode]);
 
@@ -40,30 +47,37 @@ app.post('/api/verify-store', async (req, res) => {
 
     const store = checkResult.rows[0];
 
-    // Optional: check for existing link
+    // 🔄 Check if manager already linked to store
     const existsQuery = `
       SELECT 1 FROM manager_store_links
       WHERE manager_id = $1 AND store_id = $2
     `;
-    const exists = await pool.query(existsQuery, [managerId, store.id]);
+    const exists = await pool.query(existsQuery, [managerId, store.store_id]);
+
     if (exists.rows.length > 0) {
       return res.json({
         success: true,
-        store,
+        store: {
+          id: store.store_id,
+          city: store.city,
+        },
         message: 'Store already linked to manager',
       });
     }
 
-    // Link manager to store
+    // ➕ Link store to manager
     const insertQuery = `
       INSERT INTO manager_store_links (manager_id, store_id, added_at)
       VALUES ($1, $2, NOW())
     `;
-    await pool.query(insertQuery, [managerId, store.id]);
+    await pool.query(insertQuery, [managerId, store.store_id]);
 
     res.json({
       success: true,
-      store,
+      store: {
+        id: store.store_id,
+        city: store.city,
+      },
       message: 'Store successfully linked to manager',
     });
 
