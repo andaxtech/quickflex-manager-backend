@@ -113,7 +113,7 @@ app.get('/api/store/:storeId/blocks', async (req, res) => {
         d.email,
         d.license_number,
         d.license_expiration,
-        d.registration_expiration,
+        d.registration_date,
         i.start_date AS insurance_start,
         i.end_date AS insurance_end
       FROM blocks AS b
@@ -140,7 +140,7 @@ app.get('/api/store/:storeId/blocks', async (req, res) => {
             email: row.email,
             licenseNumber: row.license_number,
             licenseValid: new Date(row.license_expiration) > new Date(),
-            registrationValid: new Date(row.registration_expiration) > new Date(),
+            registrationValid: new Date(row.registration_date) > new Date(),
             insuranceValid: new Date(row.insurance_end) > new Date(),
           }
         : undefined,
