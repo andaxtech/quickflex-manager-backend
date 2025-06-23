@@ -18,7 +18,7 @@ app.get('/api/ping', (req, res) => {
 
 // ✅ Verify store and link to manager
 app.post('/api/verify-store', async (req, res) => {
-  let { storeId, fcode, managerId } = req.body;
+  const { storeId, fcode, managerId } = req.body;
 
   if (!storeId || !fcode || !managerId) {
     return res.status(400).json({ success: false, message: 'Missing required fields' });
@@ -29,11 +29,8 @@ app.post('/api/verify-store', async (req, res) => {
     return res.status(400).json({ success: false, message: 'Store ID must be a 4-digit number' });
   }
 
-  // Convert to integer to match PostgreSQL type
-  storeId = parseInt(storeId, 10);
-
   try {
-    // 🔍 Check if storeId + fcode match (case-insensitive)
+    // 🔍 Validate against locations table
     const checkQuery = `
       SELECT store_id, city FROM locations
       WHERE store_id = $1 AND LOWER(fcode) = LOWER($2)
@@ -49,7 +46,7 @@ app.post('/api/verify-store', async (req, res) => {
 
     const store = checkResult.rows[0];
 
-    // 🔁 Check if store already linked
+    // 🔁 Check if already linked
     const existsQuery = `
       SELECT 1 FROM manager_store_links
       WHERE manager_id = $1 AND store_id = $2
