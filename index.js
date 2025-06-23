@@ -88,6 +88,71 @@ app.post('/api/verify-store', async (req, res) => {
   }
 });
 
+// ✅ Get blocks for a specific store
+app.get('/api/store/:storeId/blocks', async (req, res) => {
+  const { storeId } = req.params;
+
+  if (!storeId) {
+    return res.status(400).json({ success: false, message: 'Missing storeId' });
+  }
+
+  try {
+    const query = `
+      SELECT 
+        b.id AS block_id,
+        b.day,
+        b.start_time,
+        b.end_time,
+        b.amount,
+        b.status,
+        bc.claim_time,
+        d.id AS driver_id,
+        d.first_name,
+        d.last_name,
+        d.phone_number,
+        d.email,
+        d.license_number,
+        d.license_expiration,
+        d.registration_expiration,
+        i.start_date AS insurance_start,
+        i.end_date AS insurance_end
+      FROM blocks b
+      LEFT JOIN block_claims bc ON b.id = bc.block_id
+      LEFT JOIN drivers d ON bc.driver_id = d.id
+      LEFT JOIN insurance_details i ON i.driver_id = d.id
+      WHERE b.location_id = $1
+    `;
+    
+    const result = await pool.query(query, [storeId]);
+
+    const blocks = result.rows.map((row) => ({
+      blockId: row.block_id,
+      day: row.day,
+      startTime: row.start_time,
+      endTime: row.end_time,
+      amount: row.amount,
+      status: row.status,
+      claimTime: row.claim_time,
+      driver: row.driver_id
+        ? {
+            fullName: `${row.first_name} ${row.last_name}`,
+            phone: row.phone_number,
+            email: row.email,
+            licenseNumber: row.license_number,
+            licenseValid: new Date(row.license_expiration) > new Date(),
+            registrationValid: new Date(row.registration_expiration) > new Date(),
+            insuranceValid: new Date(row.insurance_end) > new Date(),
+          }
+        : undefined,
+    }));
+
+    res.json({ success: true, blocks });
+  } catch (err) {
+    console.error('❌ Error fetching store blocks:', err);
+    res.status(500).json({ success: false, message: 'Internal server error' });
+  }
+});
+
 // ✅ Get stores linked to manager
 app.get('/api/my-stores', async (req, res) => {
   const { managerId } = req.query;
