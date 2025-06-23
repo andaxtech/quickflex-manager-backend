@@ -106,7 +106,7 @@ app.get('/api/store/:storeId/blocks', async (req, res) => {
         b.amount,
         b.status,
         bc.claim_time,
-        driver_id.id AS driver_id,
+        d.driver_id,
         d.first_name,
         d.last_name,
         d.phone_number,
