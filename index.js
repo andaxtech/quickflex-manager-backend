@@ -11,27 +11,29 @@ const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
 });
 
-// ✅ Ping route
+// ✅ Health check
 app.get('/api/ping', (req, res) => {
   res.send('Manager backend is alive');
 });
 
-// ✅ Store verification + link to manager
+// ✅ Verify store and link to manager
 app.post('/api/verify-store', async (req, res) => {
-  const { storeId, fcode, managerId } = req.body;
+  let { storeId, fcode, managerId } = req.body;
 
   if (!storeId || !fcode || !managerId) {
     return res.status(400).json({ success: false, message: 'Missing required fields' });
   }
 
-  // ✅ Validate storeId: must be 4-digit numeric
-  const storeIdStr = String(storeId);
-  if (!/^\d{4}$/.test(storeIdStr)) {
+  // 🛡️ Ensure storeId is a 4-digit numeric string
+  if (!/^\d{4}$/.test(storeId)) {
     return res.status(400).json({ success: false, message: 'Store ID must be a 4-digit number' });
   }
 
+  // Convert to integer to match PostgreSQL type
+  storeId = parseInt(storeId, 10);
+
   try {
-    // 🔐 Verify storeId and FCODE match (case-insensitive)
+    // 🔍 Check if storeId + fcode match (case-insensitive)
     const checkQuery = `
       SELECT store_id, city FROM locations
       WHERE store_id = $1 AND LOWER(fcode) = LOWER($2)
@@ -47,7 +49,7 @@ app.post('/api/verify-store', async (req, res) => {
 
     const store = checkResult.rows[0];
 
-    // 🔄 Check if manager already linked to store
+    // 🔁 Check if store already linked
     const existsQuery = `
       SELECT 1 FROM manager_store_links
       WHERE manager_id = $1 AND store_id = $2
@@ -65,7 +67,7 @@ app.post('/api/verify-store', async (req, res) => {
       });
     }
 
-    // ➕ Link store to manager
+    // ➕ Insert link
     const insertQuery = `
       INSERT INTO manager_store_links (manager_id, store_id, added_at)
       VALUES ($1, $2, NOW())
@@ -87,7 +89,7 @@ app.post('/api/verify-store', async (req, res) => {
   }
 });
 
-// ✅ Get stores linked to a manager
+// ✅ Get stores linked to manager
 app.get('/api/my-stores', async (req, res) => {
   const { managerId } = req.query;
 
