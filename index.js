@@ -99,7 +99,7 @@ app.get('/api/store/:storeId/blocks', async (req, res) => {
   try {
     const query = `
       SELECT 
-        b.id AS block_id,
+        block_id AS block_id,
         b.day,
         b.start_time,
         b.end_time,
@@ -117,7 +117,7 @@ app.get('/api/store/:storeId/blocks', async (req, res) => {
         i.start_date AS insurance_start,
         i.end_date AS insurance_end
       FROM blocks b
-      LEFT JOIN block_claims bc ON b.id = bc.block_id
+      LEFT JOIN block_claims bc ON b.block_id = bc.block_id
       LEFT JOIN drivers d ON bc.driver_id = d.id
       LEFT JOIN insurance_details i ON i.driver_id = d.id
       WHERE b.location_id = $1
