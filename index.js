@@ -99,7 +99,7 @@ app.get('/api/store/:storeId/blocks', async (req, res) => {
   try {
     const query = `
       SELECT 
-        b.block_id AS block_id,
+        b.block_id,
         b.day,
         b.start_time,
         b.end_time,
@@ -116,10 +116,10 @@ app.get('/api/store/:storeId/blocks', async (req, res) => {
         d.registration_expiration,
         i.start_date AS insurance_start,
         i.end_date AS insurance_end
-      FROM blocks b
-      LEFT JOIN block_claims bc ON b.block_id = bc.block_id
-      LEFT JOIN drivers d ON bc.driver_id = d.driver_id
-      LEFT JOIN insurance_details i ON i.driver_id = d.driver_id
+      FROM blocks AS b
+      LEFT JOIN block_claims AS bc ON b.block_id = bc.block_id
+      LEFT JOIN drivers AS d ON bc.driver_id = d.driver_id
+      LEFT JOIN insurance_details AS i ON i.driver_id = d.driver_id
       WHERE b.location_id = $1
     `;
 
@@ -135,23 +135,24 @@ app.get('/api/store/:storeId/blocks', async (req, res) => {
       claimTime: row.claim_time,
       driver: row.driver_id
         ? {
-            fullName: `${row.first_name ?? ''} ${row.last_name ?? ''}`.trim(),
-            phone: row.phone_number ?? '',
-            email: row.email ?? '',
-            licenseNumber: row.license_number ?? '',
-            licenseValid: row.license_expiration ? new Date(row.license_expiration) > new Date() : false,
-            registrationValid: row.registration_expiration ? new Date(row.registration_expiration) > new Date() : false,
-            insuranceValid: row.insurance_end ? new Date(row.insurance_end) > new Date() : false,
+            fullName: `${row.first_name} ${row.last_name}`,
+            phone: row.phone_number,
+            email: row.email,
+            licenseNumber: row.license_number,
+            licenseValid: new Date(row.license_expiration) > new Date(),
+            registrationValid: new Date(row.registration_expiration) > new Date(),
+            insuranceValid: new Date(row.insurance_end) > new Date(),
           }
         : undefined,
     }));
 
     res.json({ success: true, blocks });
   } catch (err) {
-    console.error('❌ Error fetching store blocks:', err.stack); // <– shows full trace
-    res.status(500).json({ success: false, message: 'Internal server error' });
+    console.error('❌ Error fetching store blocks:', err);
+    res.status(500).json({ success: false, message: 'Internal server error', error: err.message });
   }
 });
+
 
 
 // ✅ Get stores linked to manager
