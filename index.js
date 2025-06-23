@@ -119,7 +119,7 @@ app.get('/api/store/:storeId/blocks', async (req, res) => {
         b.amount,
         b.status,
         bc.claim_time,
-        d.id AS driver_id,
+        d.driver_id AS driver_id,
         d.first_name,
         d.last_name,
         d.phone_number,
@@ -131,8 +131,8 @@ app.get('/api/store/:storeId/blocks', async (req, res) => {
         i.end_date AS insurance_end
       FROM blocks AS b
       LEFT JOIN block_claims AS bc ON b.block_id = bc.block_id
-      LEFT JOIN drivers AS d ON bc.driver_id = d.id
-      LEFT JOIN insurance_details AS i ON i.driver_id = d.id
+      LEFT JOIN drivers AS d ON bc.driver_id = d.driver_id
+      LEFT JOIN insurance_details AS i ON i.driver_id = d.driver_id
       WHERE b.location_id = $1
     `;
 
