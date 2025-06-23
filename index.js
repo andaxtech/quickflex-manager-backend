@@ -99,7 +99,7 @@ app.get('/api/store/:storeId/blocks', async (req, res) => {
   try {
     const query = `
       SELECT 
-        block_id AS block_id,
+        b.block_id AS block_id,
         b.day,
         b.start_time,
         b.end_time,
