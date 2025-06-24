@@ -95,9 +95,10 @@ app.get('/api/store/:storeId/blocks', async (req, res) => {
 
   try {
     const locResult = await pool.query(
-      'SELECT location_id FROM locations WHERE store_id = $1',
-      [storeId]
-    );
+  'SELECT location_id FROM locations WHERE store_id = $1::TEXT',
+  [storeId]
+);
+
 
     if (locResult.rows.length === 0) {
       return res.status(404).json({ success: false, message: 'Store not found' });
