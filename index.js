@@ -33,7 +33,6 @@ app.post('/api/verify-store', async (req, res) => {
   }
 
   try {
-    // 🔍 Check if store exists with matching FCODE (case-insensitive)
     const checkQuery = `
       SELECT store_id, city FROM locations
       WHERE store_id = $1 AND LOWER(fcode) = LOWER($2)
@@ -49,7 +48,6 @@ app.post('/api/verify-store', async (req, res) => {
 
     const store = checkResult.rows[0];
 
-    // 🔁 Check if already linked
     const existsQuery = `
       SELECT 1 FROM manager_store_links
       WHERE manager_id = $1 AND store_id = $2
@@ -67,7 +65,6 @@ app.post('/api/verify-store', async (req, res) => {
       });
     }
 
-    // ➕ Insert into manager_store_links
     const insertQuery = `
       INSERT INTO manager_store_links (manager_id, store_id, added_at)
       VALUES ($1, $2, NOW())
@@ -97,7 +94,6 @@ app.get('/api/store/:storeId/blocks', async (req, res) => {
   }
 
   try {
-    // Step 1: Get the location_id for the store_id
     const locResult = await pool.query(
       'SELECT location_id FROM locations WHERE store_id = $1',
       [storeId]
@@ -109,7 +105,6 @@ app.get('/api/store/:storeId/blocks', async (req, res) => {
 
     const locationId = locResult.rows[0].location_id;
 
-    // Step 2: Use location_id to fetch blocks
     const query = `
       SELECT 
         b.block_id,
@@ -166,7 +161,57 @@ app.get('/api/store/:storeId/blocks', async (req, res) => {
   }
 });
 
+// ✅ Get driver details for a specific block
+app.get('/api/block/:blockId/details', async (req, res) => {
+  const { blockId } = req.params;
 
+  if (!blockId) {
+    return res.status(400).json({ success: false, message: 'Missing blockId' });
+  }
+
+  try {
+    const query = `
+      SELECT 
+        d.driver_id,
+        d.first_name,
+        d.last_name,
+        d.phone_number,
+        d.email,
+        d.license_number,
+        d.license_expiration,
+        d.registration_date,
+        i.end_date AS insurance_end
+      FROM block_claims AS bc
+      JOIN drivers AS d ON bc.driver_id = d.driver_id
+      LEFT JOIN insurance_details AS i ON d.driver_id = i.driver_id
+      WHERE bc.block_id = $1
+      LIMIT 1
+    `;
+
+    const result = await pool.query(query, [blockId]);
+
+    if (result.rows.length === 0) {
+      return res.json({ success: true, driver: null });
+    }
+
+    const row = result.rows[0];
+
+    const driver = {
+      fullName: `${row.first_name} ${row.last_name}`,
+      phone: row.phone_number,
+      email: row.email,
+      licenseNumber: row.license_number,
+      licenseValid: new Date(row.license_expiration) > new Date(),
+      registrationValid: new Date(row.registration_date) > new Date(),
+      insuranceValid: new Date(row.insurance_end) > new Date(),
+    };
+
+    res.json({ success: true, driver });
+  } catch (err) {
+    console.error('❌ Error in /api/block/:blockId/details:', err);
+    res.status(500).json({ success: false, message: 'Internal server error', error: err.message });
+  }
+});
 
 // ✅ Get stores linked to manager
 app.get('/api/my-stores', async (req, res) => {
