@@ -214,7 +214,7 @@ app.get('/api/my-stores', async (req, res) => {
 
   try {
     const query = `
-      SELECT l.store_id AS id, l.city
+      SELECT l.store_id AS id, l.city, l.location_id
       FROM manager_store_links msl
       JOIN locations l ON msl.store_id = l.store_id
       WHERE msl.manager_id = $1
