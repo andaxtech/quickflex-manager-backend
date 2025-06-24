@@ -117,8 +117,7 @@ app.get('/api/location/:locationId/blocks', async (req, res) => {
       LEFT JOIN block_claims AS bc ON b.block_id = bc.block_id
       LEFT JOIN drivers AS d ON bc.driver_id = d.driver_id
       LEFT JOIN insurance_details AS i ON i.driver_id = d.driver_id
-      WHERE b.location_id = $1 AND b.start_time > NOW()
-      ORDER BY b.start_time ASC
+      WHERE b.location_id = $1
     `;
 
     const result = await pool.query(query, [locationId]);
@@ -146,10 +145,11 @@ app.get('/api/location/:locationId/blocks', async (req, res) => {
 
     res.json({ success: true, blocks });
   } catch (err) {
-    console.error('❌ Error fetching location blocks:', err);
+    console.error('❌ Error fetching blocks by location:', err);
     res.status(500).json({ success: false, message: 'Internal server error', error: err.message });
   }
 });
+
 
 
 // ✅ Get driver details for a specific block
@@ -230,50 +230,47 @@ app.get('/api/my-stores', async (req, res) => {
 
 const PORT = process.env.PORT || 5003;
 
-// ✅ Get specific block detail + driver info for a store
-app.get('/api/store/:storeId/blocks/:blockId', async (req, res) => {
-  const { storeId, blockId } = req.params;
+// ✅ Get specific block detail + driver info for a location
+app.get('/api/location/:locationId/blocks/:blockId', async (req, res) => {
+  const { locationId, blockId } = req.params;
 
-  if (!storeId || !blockId) {
-    return res.status(400).json({ success: false, message: 'Missing storeId or blockId' });
+  if (!locationId || !blockId) {
+    return res.status(400).json({ success: false, message: 'Missing locationId or blockId' });
   }
 
   try {
-    const blockResult = await pool.query(`
-  SELECT 
-    b.block_id,
-    TO_CHAR(b.start_time, 'YYYY-MM-DD') AS day,
-    TO_CHAR(b.start_time, 'HH12:MI AM') AS start_time,
-    TO_CHAR(b.end_time, 'HH12:MI AM') AS end_time,
-    b.amount,
-    b.status,
-    bc.claim_time,
-    d.first_name,
-    d.last_name,
-    d.phone_number,
-    d.email,
-    d.license_number,
-    d.license_expiration,
-    d.registration_date,
-    i.end_date AS insurance_end
-  FROM blocks b
-  LEFT JOIN block_claims bc ON b.block_id = bc.block_id
-  LEFT JOIN drivers d ON bc.driver_id = d.driver_id
-  LEFT JOIN insurance_details i ON d.driver_id = i.driver_id
-  WHERE 
-    b.block_id = $1 
-    AND b.location_id IN (
-      SELECT location_id FROM locations WHERE store_id = $2::TEXT
-    )
-    AND b.start_time > NOW()  -- ✅ Only return if in the future
-  LIMIT 1
-`, [blockId, storeId]);
+    const query = `
+      SELECT 
+        b.block_id,
+        TO_CHAR(b.start_time, 'YYYY-MM-DD') AS day,
+        TO_CHAR(b.start_time, 'HH12:MI AM') AS start_time,
+        TO_CHAR(b.end_time, 'HH12:MI AM') AS end_time,
+        b.amount,
+        b.status,
+        bc.claim_time,
+        d.first_name,
+        d.last_name,
+        d.phone_number,
+        d.email,
+        d.license_number,
+        d.license_expiration,
+        d.registration_date,
+        i.end_date AS insurance_end
+      FROM blocks b
+      LEFT JOIN block_claims bc ON b.block_id = bc.block_id
+      LEFT JOIN drivers d ON bc.driver_id = d.driver_id
+      LEFT JOIN insurance_details i ON d.driver_id = i.driver_id
+      WHERE b.block_id = $1 AND b.location_id = $2
+      LIMIT 1
+    `;
 
-    if (blockResult.rows.length === 0) {
+    const result = await pool.query(query, [blockId, locationId]);
+
+    if (result.rows.length === 0) {
       return res.status(404).json({ success: false, message: 'Block not found' });
     }
 
-    const row = blockResult.rows[0];
+    const row = result.rows[0];
     const driver = row.first_name ? {
       fullName: `${row.first_name} ${row.last_name}`,
       phone: row.phone_number,
@@ -297,10 +294,11 @@ app.get('/api/store/:storeId/blocks/:blockId', async (req, res) => {
 
     res.json({ success: true, block });
   } catch (err) {
-    console.error('❌ Error fetching block by ID:', err);
+    console.error('❌ Error fetching block by location:', err);
     res.status(500).json({ success: false, message: 'Internal server error' });
   }
 });
+
 
 
 app.listen(PORT, () => {
