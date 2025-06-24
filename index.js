@@ -250,31 +250,34 @@ app.get('/api/store/:storeId/blocks/:blockId', async (req, res) => {
 
   try {
     const blockResult = await pool.query(`
-      SELECT 
-        b.block_id,
-        TO_CHAR(b.start_time, 'YYYY-MM-DD') AS day,
-        TO_CHAR(b.start_time, 'HH12:MI AM') AS start_time,
-        TO_CHAR(b.end_time, 'HH12:MI AM') AS end_time,
-        b.amount,
-        b.status,
-        bc.claim_time,
-        d.first_name,
-        d.last_name,
-        d.phone_number,
-        d.email,
-        d.license_number,
-        d.license_expiration,
-        d.registration_date,
-        i.end_date AS insurance_end
-      FROM blocks b
-      LEFT JOIN block_claims bc ON b.block_id = bc.block_id
-      LEFT JOIN drivers d ON bc.driver_id = d.driver_id
-      LEFT JOIN insurance_details i ON d.driver_id = i.driver_id
-      WHERE b.block_id = $1 AND b.location_id IN (
-        SELECT location_id FROM locations WHERE store_id = $2
-      )
-      LIMIT 1
-    `, [blockId, storeId]);
+  SELECT 
+    b.block_id,
+    TO_CHAR(b.start_time, 'YYYY-MM-DD') AS day,
+    TO_CHAR(b.start_time, 'HH12:MI AM') AS start_time,
+    TO_CHAR(b.end_time, 'HH12:MI AM') AS end_time,
+    b.amount,
+    b.status,
+    bc.claim_time,
+    d.first_name,
+    d.last_name,
+    d.phone_number,
+    d.email,
+    d.license_number,
+    d.license_expiration,
+    d.registration_date,
+    i.end_date AS insurance_end
+  FROM blocks b
+  LEFT JOIN block_claims bc ON b.block_id = bc.block_id
+  LEFT JOIN drivers d ON bc.driver_id = d.driver_id
+  LEFT JOIN insurance_details i ON d.driver_id = i.driver_id
+  WHERE 
+    b.block_id = $1 
+    AND b.location_id IN (
+      SELECT location_id FROM locations WHERE store_id = $2::TEXT
+    )
+    AND b.start_time > NOW()  -- ✅ Only return if in the future
+  LIMIT 1
+`, [blockId, storeId]);
 
     if (blockResult.rows.length === 0) {
       return res.status(404).json({ success: false, message: 'Block not found' });
