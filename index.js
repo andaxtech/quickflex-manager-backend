@@ -85,27 +85,15 @@ app.post('/api/verify-store', async (req, res) => {
   }
 });
 
-// ✅ Get blocks for a specific store
-app.get('/api/store/:storeId/blocks', async (req, res) => {
-  const { storeId } = req.params;
+// ✅ Get blocks for a specific location
+app.get('/api/location/:locationId/blocks', async (req, res) => {
+  const { locationId } = req.params;
 
-  if (!storeId) {
-    return res.status(400).json({ success: false, message: 'Missing storeId' });
+  if (!locationId) {
+    return res.status(400).json({ success: false, message: 'Missing locationId' });
   }
 
   try {
-    const locResult = await pool.query(
-  'SELECT location_id FROM locations WHERE store_id = $1::TEXT',
-  [storeId]
-);
-
-
-    if (locResult.rows.length === 0) {
-      return res.status(404).json({ success: false, message: 'Store not found' });
-    }
-
-    const locationId = locResult.rows[0].location_id;
-
     const query = `
       SELECT 
         b.block_id,
@@ -129,7 +117,8 @@ app.get('/api/store/:storeId/blocks', async (req, res) => {
       LEFT JOIN block_claims AS bc ON b.block_id = bc.block_id
       LEFT JOIN drivers AS d ON bc.driver_id = d.driver_id
       LEFT JOIN insurance_details AS i ON i.driver_id = d.driver_id
-      WHERE b.location_id = $1
+      WHERE b.location_id = $1 AND b.start_time > NOW()
+      ORDER BY b.start_time ASC
     `;
 
     const result = await pool.query(query, [locationId]);
@@ -157,10 +146,11 @@ app.get('/api/store/:storeId/blocks', async (req, res) => {
 
     res.json({ success: true, blocks });
   } catch (err) {
-    console.error('❌ Error fetching store blocks:', err);
+    console.error('❌ Error fetching location blocks:', err);
     res.status(500).json({ success: false, message: 'Internal server error', error: err.message });
   }
 });
+
 
 // ✅ Get driver details for a specific block
 app.get('/api/block/:blockId/details', async (req, res) => {
