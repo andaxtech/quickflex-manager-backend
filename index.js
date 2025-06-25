@@ -368,22 +368,24 @@ app.get('/api/blocks', async (req, res) => {
     const query = `
       SELECT 
         block_id,
-        TO_CHAR(start_time, 'HH12:MI AM') AS start_time,
-        TO_CHAR(end_time, 'HH12:MI AM') AS end_time,
+        TO_CHAR(start_time::timestamp, 'HH12:MI AM') AS start_time,
+        TO_CHAR(end_time::timestamp, 'HH12:MI AM') AS end_time,
         amount,
         status
       FROM blocks
-      WHERE location_id = $1 AND day = $2
+      WHERE location_id = $1 AND "day" = $2
       ORDER BY start_time
     `;
+
     const result = await pool.query(query, [location_id, day]);
 
     res.json(result.rows);
   } catch (err) {
-    console.error('❌ Error fetching blocks by day:', err);
-    res.status(500).json({ success: false, message: 'Internal server error' });
+    console.error('❌ Error fetching blocks by day:', err.message, err.stack);
+    res.status(500).json({ success: false, message: 'Internal server error', error: err.message });
   }
 });
+
 
 
 
