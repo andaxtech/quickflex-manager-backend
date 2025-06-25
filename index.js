@@ -360,31 +360,32 @@ app.post('/api/blocks', async (req, res) => {
 app.get('/api/blocks', async (req, res) => {
   const { location_id, day } = req.query;
 
-  if (!location_id || !day) {
-    return res.status(400).json({ success: false, message: 'Missing location_id or day' });
+  const locationIdInt = parseInt(location_id);
+  if (!location_id || !day || isNaN(locationIdInt)) {
+    return res.status(400).json({ success: false, message: 'Missing or invalid location_id or day' });
   }
 
   try {
     const query = `
       SELECT 
         block_id,
-        TO_CHAR(start_time::timestamp, 'HH12:MI AM') AS start_time,
-        TO_CHAR(end_time::timestamp, 'HH12:MI AM') AS end_time,
+        TO_CHAR(start_time, 'HH12:MI AM') AS start_time,
+        TO_CHAR(end_time, 'HH12:MI AM') AS end_time,
         amount,
         status
       FROM blocks
-      WHERE location_id = $1 AND "day" = $2
+      WHERE location_id = $1 AND day = $2
       ORDER BY start_time
     `;
 
-    const result = await pool.query(query, [location_id, day]);
-
+    const result = await pool.query(query, [locationIdInt, day]);
     res.json({ success: true, blocks: result.rows });
   } catch (err) {
-    console.error('❌ Error fetching blocks by day:', err.message, err.stack);
-    res.status(500).json({ success: false, message: 'Internal server error', error: err.message });
+    console.error('❌ Error fetching blocks by day:', err);
+    res.status(500).json({ success: false, message: 'Internal server error' });
   }
 });
+
 
 
 
