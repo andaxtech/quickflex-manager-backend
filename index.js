@@ -150,7 +150,7 @@ app.get('/api/location/:locationId/blocks', async (req, res) => {
   }
 });
 
-// ✅ Get storeId by locationId
+// ✅ Get store details by locationId
 app.get('/api/location/:locationId/store', async (req, res) => {
   const { locationId } = req.params;
 
@@ -160,7 +160,10 @@ app.get('/api/location/:locationId/store', async (req, res) => {
 
   try {
     const result = await pool.query(
-      'SELECT store_id FROM locations WHERE location_id = $1 LIMIT 1',
+      `SELECT store_id, phone, street_name, city, region, postal_code 
+       FROM locations 
+       WHERE location_id = $1 
+       LIMIT 1`,
       [locationId]
     );
 
@@ -168,12 +171,24 @@ app.get('/api/location/:locationId/store', async (req, res) => {
       return res.status(404).json({ success: false, message: 'Store not found for given locationId' });
     }
 
-    res.json({ success: true, storeId: result.rows[0].store_id });
+    const row = result.rows[0];
+    res.json({
+      success: true,
+      store: {
+        storeId: row.store_id,
+        phone: row.phone,
+        street: row.street_name,
+        city: row.city,
+        region: row.region,
+        postalCode: row.postal_code,
+      },
+    });
   } catch (err) {
-    console.error('❌ Error fetching store ID:', err);
+    console.error('❌ Error fetching store details:', err);
     res.status(500).json({ success: false, message: 'Internal server error', error: err.message });
   }
 });
+
 
 // ✅ Get driver details for a specific block
 app.get('/api/block/:blockId/details', async (req, res) => {
