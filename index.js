@@ -24,7 +24,6 @@ app.post('/api/verify-store', async (req, res) => {
     return res.status(400).json({ success: false, message: 'Missing required fields' });
   }
 
-  // 🛡️ Validate storeId: must be exactly 4 digits
   if (!/^\d{4}$/.test(storeId)) {
     return res.status(400).json({
       success: false,
@@ -150,7 +149,30 @@ app.get('/api/location/:locationId/blocks', async (req, res) => {
   }
 });
 
+// ✅ Get storeId by locationId
+app.get('/api/location/:locationId/store', async (req, res) => {
+  const { locationId } = req.params;
 
+  if (!locationId) {
+    return res.status(400).json({ success: false, message: 'Missing locationId' });
+  }
+
+  try {
+    const result = await pool.query(
+      'SELECT store_id FROM locations WHERE location_id = $1 LIMIT 1',
+      [locationId]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'Store not found for given locationId' });
+    }
+
+    res.json({ success: true, storeId: result.rows[0].store_id });
+  } catch (err) {
+    console.error('❌ Error fetching store ID:', err);
+    res.status(500).json({ success: false, message: 'Internal server error', error: err.message });
+  }
+});
 
 // ✅ Get driver details for a specific block
 app.get('/api/block/:blockId/details', async (req, res) => {
@@ -298,8 +320,6 @@ app.get('/api/location/:locationId/blocks/:blockId', async (req, res) => {
     res.status(500).json({ success: false, message: 'Internal server error' });
   }
 });
-
-
 
 app.listen(PORT, () => {
   console.log('✅ Manager backend is up and running on port', PORT);
