@@ -172,8 +172,11 @@ app.get('/api/location/:locationId/store', async (req, res) => {
     }
 
     const row = result.rows[0];
+
+    // ✅ return both old and new formats
     res.json({
       success: true,
+      storeId: row.store_id,
       store: {
         storeId: row.store_id,
         phone: row.phone,
@@ -188,6 +191,8 @@ app.get('/api/location/:locationId/store', async (req, res) => {
     res.status(500).json({ success: false, message: 'Internal server error', error: err.message });
   }
 });
+
+
 
 
 // ✅ Get driver details for a specific block
