@@ -322,9 +322,7 @@ app.get('/api/location/:locationId/blocks/:blockId', async (req, res) => {
   }
 });
 
-//add blocks to the table
-const { v4: uuidv4 } = require('uuid');
-
+// Add blocks to the table
 app.post('/api/blocks', async (req, res) => {
   const { location_id, start_time, end_time, day, amount, status } = req.body;
 
@@ -332,17 +330,14 @@ app.post('/api/blocks', async (req, res) => {
     return res.status(400).json({ success: false, message: 'Missing required fields' });
   }
 
-  const block_id = uuidv4();
-
   try {
     const insertQuery = `
-      INSERT INTO blocks (block_id, location_id, start_time, end_time, day, amount, status)
-      VALUES ($1, $2, $3, $4, $5, $6, $7)
+      INSERT INTO blocks (location_id, start_time, end_time, day, amount, status)
+      VALUES ($1, $2, $3, $4, $5, $6)
       RETURNING block_id
     `;
 
     const result = await pool.query(insertQuery, [
-      block_id,
       location_id,
       start_time,
       end_time,
