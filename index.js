@@ -356,6 +356,45 @@ app.post('/api/blocks', async (req, res) => {
     res.status(500).json({ success: false, message: 'Database insert error' });
   }
 });
+// ✅ Get blocks for a specific day and location
+app.get('/api/blocks/day', async (req, res) => {
+  const { locationId, date } = req.query;
+
+  if (!locationId || !date) {
+    return res.status(400).json({ success: false, message: 'Missing locationId or date' });
+  }
+
+  try {
+    const result = await pool.query(
+      `
+      SELECT 
+        block_id,
+        TO_CHAR(start_time, 'HH12:MI AM') AS start_time,
+        TO_CHAR(end_time, 'HH12:MI AM') AS end_time,
+        amount,
+        status
+      FROM blocks
+      WHERE location_id = $1 AND day = $2
+      ORDER BY start_time ASC
+      `,
+      [locationId, date]
+    );
+
+    const blocks = result.rows.map(row => ({
+      blockId: row.block_id,
+      startTime: row.start_time,
+      endTime: row.end_time,
+      amount: row.amount,
+      status: row.status,
+    }));
+
+    res.json({ success: true, blocks });
+  } catch (err) {
+    console.error('❌ Error fetching daily blocks:', err);
+    res.status(500).json({ success: false, message: 'Internal server error' });
+  }
+});
+
 
 app.listen(PORT, () => {
   console.log('✅ Manager backend is up and running on port', PORT);
