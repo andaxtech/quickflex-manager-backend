@@ -356,44 +356,33 @@ app.post('/api/blocks', async (req, res) => {
     res.status(500).json({ success: false, message: 'Database insert error' });
   }
 });
-// ✅ Get blocks for a specific day and location
-app.get('/api/blocks/day', async (req, res) => {
-  const { locationId, date } = req.query;
+// ✅ Get blocks by location and day
+app.get('/api/blocks', async (req, res) => {
+  const { location_id, day } = req.query;
 
-  if (!locationId || !date) {
-    return res.status(400).json({ success: false, message: 'Missing locationId or date' });
+  if (!location_id || !day) {
+    return res.status(400).json({ success: false, message: 'Missing location_id or day' });
   }
 
   try {
-    const result = await pool.query(
-      `
+    const query = `
       SELECT 
-        block_id,
         TO_CHAR(start_time, 'HH12:MI AM') AS start_time,
         TO_CHAR(end_time, 'HH12:MI AM') AS end_time,
-        amount,
-        status
+        amount
       FROM blocks
       WHERE location_id = $1 AND day = $2
-      ORDER BY start_time ASC
-      `,
-      [locationId, date]
-    );
+      ORDER BY start_time
+    `;
 
-    const blocks = result.rows.map(row => ({
-      blockId: row.block_id,
-      startTime: row.start_time,
-      endTime: row.end_time,
-      amount: row.amount,
-      status: row.status,
-    }));
-
-    res.json({ success: true, blocks });
+    const result = await pool.query(query, [location_id, day]);
+    res.json(result.rows);
   } catch (err) {
-    console.error('❌ Error fetching daily blocks:', err);
+    console.error('❌ Error in /api/blocks:', err);
     res.status(500).json({ success: false, message: 'Internal server error' });
   }
 });
+
 
 
 app.listen(PORT, () => {
