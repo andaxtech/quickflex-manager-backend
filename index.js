@@ -369,8 +369,8 @@ app.get('/api/blocks', async (req, res) => {
     const query = `
       SELECT 
         block_id,
-        TO_CHAR(start_time, 'HH12:MI AM') AS start_time,
-        TO_CHAR(end_time, 'HH12:MI AM') AS end_time,
+        TO_CHAR(start_time, 'HH12:MI AM') AS start_time_formatted,
+        TO_CHAR(end_time, 'HH12:MI AM') AS end_time_formatted,
         amount,
         status
       FROM blocks
