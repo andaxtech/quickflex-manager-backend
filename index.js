@@ -406,6 +406,37 @@ app.get('/api/blocks', async (req, res) => {
   }
 });
 
+// remove th block( includes check if block is claimed and delete block)
+app.delete('/api/blocks/:blockId', async (req, res) => {
+  const { blockId } = req.params;
+
+  if (!blockId) {
+    return res.status(400).json({ success: false, message: 'Missing blockId' });
+  }
+
+  try {
+    // Check if block is claimed(dependency)
+    const checkClaim = await pool.query(
+      `SELECT 1 FROM block_claims WHERE block_id = $1`,
+      [blockId]
+    );
+
+    if (checkClaim.rows.length > 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Cannot delete block — it is already claimed',
+      });
+    }
+
+    // Delete block(Dependency)
+    await pool.query(`DELETE FROM blocks WHERE block_id = $1`, [blockId]);
+
+    res.json({ success: true, message: 'Block deleted successfully' });
+  } catch (err) {
+    console.error('❌ Error deleting block:', err);
+    res.status(500).json({ success: false, message: 'Internal server error' });
+  }
+});
 
 
 
