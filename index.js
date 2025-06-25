@@ -379,7 +379,7 @@ app.get('/api/blocks', async (req, res) => {
 
     const result = await pool.query(query, [location_id, day]);
 
-    res.json(result.rows);
+    res.json({ success: true, blocks: result.rows });
   } catch (err) {
     console.error('❌ Error fetching blocks by day:', err.message, err.stack);
     res.status(500).json({ success: false, message: 'Internal server error', error: err.message });
