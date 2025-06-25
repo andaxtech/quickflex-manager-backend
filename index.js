@@ -322,6 +322,46 @@ app.get('/api/location/:locationId/blocks/:blockId', async (req, res) => {
   }
 });
 
+//add blocks to the table
+const { v4: uuidv4 } = require('uuid');
+
+app.post('/api/blocks', async (req, res) => {
+  const { location_id, start_time, end_time, day, amount, status } = req.body;
+
+  if (!location_id || !start_time || !end_time || !day || !amount) {
+    return res.status(400).json({ success: false, message: 'Missing required fields' });
+  }
+
+  const block_id = uuidv4();
+
+  try {
+    const insertQuery = `
+      INSERT INTO blocks (block_id, location_id, start_time, end_time, day, amount, status)
+      VALUES ($1, $2, $3, $4, $5, $6, $7)
+      RETURNING block_id
+    `;
+
+    const result = await pool.query(insertQuery, [
+      block_id,
+      location_id,
+      start_time,
+      end_time,
+      day,
+      amount,
+      status || 'available',
+    ]);
+
+    res.status(201).json({
+      success: true,
+      message: 'Block created successfully',
+      blockId: result.rows[0].block_id,
+    });
+  } catch (err) {
+    console.error('❌ Error inserting block:', err);
+    res.status(500).json({ success: false, message: 'Database insert error' });
+  }
+});
+
 app.listen(PORT, () => {
   console.log('✅ Manager backend is up and running on port', PORT);
 });
