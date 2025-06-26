@@ -272,7 +272,7 @@ app.post('/api/blocks', async (req, res) => {
   try {
     const insertQuery = `
       INSERT INTO blocks (location_id, start_time, end_time, day, amount, status)
-      VALUES ($1, $2, $3, $4, $5, $6)
+      VALUES ($1, $2, $3, TO_DATE($4, 'MM/DD/YYYY'), $5, $6)
       RETURNING block_id
     `;
 
