@@ -342,15 +342,17 @@ app.get('/api/location/:locationId/blocks/:blockId', async (req, res) => {
   }
 });
 
-// Add blocks to the table
 app.post('/api/blocks', async (req, res) => {
-  const { location_id, start_time, end_time, day, amount, status } = req.body;
+  const { location_id, start_time, end_time, amount, status } = req.body;
 
-  if (!location_id || !start_time || !end_time || !day || !amount) {
+  if (!location_id || !start_time || !end_time || !amount) {
     return res.status(400).json({ success: false, message: 'Missing required fields' });
   }
 
   try {
+    // Derive the day from start_time to avoid mismatches
+    const day = new Date(start_time).toISOString().split('T')[0]; // "YYYY-MM-DD"
+
     const insertQuery = `
       INSERT INTO blocks (location_id, start_time, end_time, day, amount, status)
       VALUES ($1, $2, $3, $4, $5, $6)
@@ -376,6 +378,7 @@ app.post('/api/blocks', async (req, res) => {
     res.status(500).json({ success: false, message: 'Database insert error' });
   }
 });
+
 // ✅ Get blocks for a specific day and location
 app.get('/api/blocks', async (req, res) => {
   const { location_id, day } = req.query;
