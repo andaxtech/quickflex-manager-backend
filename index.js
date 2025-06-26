@@ -96,13 +96,13 @@ app.get('/api/location/:locationId/blocks', async (req, res) => {
     const query = `
       SELECT 
         b.block_id,
-        TO_CHAR(b.start_time, 'YYYY-MM-DD') AS start_date,
+        TO_CHAR(b.day, 'MM/DD/YYYY') AS formatted_day,
         TO_CHAR(b.start_time, 'HH12:MI AM') AS start_time_formatted,
         TO_CHAR(b.end_time, 'HH12:MI AM') AS end_time_formatted,
         b.amount,
         b.status,
         bc.claim_time,
-        d.driver_id AS driver_id,
+        d.driver_id,
         d.first_name,
         d.last_name,
         d.phone_number,
@@ -117,14 +117,15 @@ app.get('/api/location/:locationId/blocks', async (req, res) => {
       LEFT JOIN drivers AS d ON bc.driver_id = d.driver_id
       LEFT JOIN insurance_details AS i ON i.driver_id = d.driver_id
       WHERE b.location_id = $1
-      AND b.end_time > NOW()
+        AND (b.day > CURRENT_DATE OR (b.day = CURRENT_DATE AND b.end_time > CURRENT_TIME))
+      ORDER BY b.day, b.start_time
     `;
 
     const result = await pool.query(query, [locationId]);
 
     const blocks = result.rows.map((row) => ({
       blockId: row.block_id,
-      day: row.start_date,
+      day: row.formatted_day,
       startTime: row.start_time_formatted,
       endTime: row.end_time_formatted,
       amount: row.amount,
@@ -136,9 +137,9 @@ app.get('/api/location/:locationId/blocks', async (req, res) => {
             phone: row.phone_number,
             email: row.email,
             licenseNumber: row.license_number,
-            licenseValid: new Date(row.license_expiration) > new Date(),
-            registrationValid: new Date(row.registration_date) > new Date(),
-            insuranceValid: new Date(row.insurance_end) > new Date(),
+            licenseValid: row.license_expiration > new Date(),
+            registrationValid: row.registration_date > new Date(),
+            insuranceValid: row.insurance_end > new Date(),
           }
         : undefined,
     }));
@@ -146,7 +147,7 @@ app.get('/api/location/:locationId/blocks', async (req, res) => {
     res.json({ success: true, blocks });
   } catch (err) {
     console.error('❌ Error fetching blocks by location:', err);
-    res.status(500).json({ success: false, message: 'Internal server error', error: err.message });
+    res.status(500).json({ success: false, message: 'Internal server error' });
   }
 });
 
@@ -173,7 +174,6 @@ app.get('/api/location/:locationId/store', async (req, res) => {
 
     const row = result.rows[0];
 
-    // ✅ return both old and new formats
     res.json({
       success: true,
       storeId: row.store_id,
@@ -188,90 +188,9 @@ app.get('/api/location/:locationId/store', async (req, res) => {
     });
   } catch (err) {
     console.error('❌ Error fetching store details:', err);
-    res.status(500).json({ success: false, message: 'Internal server error', error: err.message });
-  }
-});
-
-
-
-
-// ✅ Get driver details for a specific block
-app.get('/api/block/:blockId/details', async (req, res) => {
-  const { blockId } = req.params;
-
-  if (!blockId) {
-    return res.status(400).json({ success: false, message: 'Missing blockId' });
-  }
-
-  try {
-    const query = `
-      SELECT 
-        d.driver_id,
-        d.first_name,
-        d.last_name,
-        d.phone_number,
-        d.email,
-        d.license_number,
-        d.license_expiration,
-        d.registration_date,
-        i.end_date AS insurance_end
-      FROM block_claims AS bc
-      JOIN drivers AS d ON bc.driver_id = d.driver_id
-      LEFT JOIN insurance_details AS i ON d.driver_id = i.driver_id
-      WHERE bc.block_id = $1
-      LIMIT 1
-    `;
-
-    const result = await pool.query(query, [blockId]);
-
-    if (result.rows.length === 0) {
-      return res.json({ success: true, driver: null });
-    }
-
-    const row = result.rows[0];
-
-    const driver = {
-      fullName: `${row.first_name} ${row.last_name}`,
-      phone: row.phone_number,
-      email: row.email,
-      licenseNumber: row.license_number,
-      licenseValid: new Date(row.license_expiration) > new Date(),
-      registrationValid: new Date(row.registration_date) > new Date(),
-      insuranceValid: new Date(row.insurance_end) > new Date(),
-    };
-
-    res.json({ success: true, driver });
-  } catch (err) {
-    console.error('❌ Error in /api/block/:blockId/details:', err);
-    res.status(500).json({ success: false, message: 'Internal server error', error: err.message });
-  }
-});
-
-// ✅ Get stores linked to manager
-app.get('/api/my-stores', async (req, res) => {
-  const { managerId } = req.query;
-
-  if (!managerId) {
-    return res.status(400).json({ success: false, message: 'Missing managerId' });
-  }
-
-  try {
-    const query = `
-      SELECT l.store_id AS id, l.city, l.location_id AS "locationId"
-      FROM manager_store_links msl
-      JOIN locations l ON msl.store_id = l.store_id
-      WHERE msl.manager_id = $1
-    `;
-    const result = await pool.query(query, [managerId]);
-
-    res.json({ success: true, stores: result.rows });
-  } catch (err) {
-    console.error('❌ Error fetching manager stores:', err);
     res.status(500).json({ success: false, message: 'Internal server error' });
   }
 });
-
-const PORT = process.env.PORT || 5003;
 
 // ✅ Get specific block detail + driver info for a location
 app.get('/api/location/:locationId/blocks/:blockId', async (req, res) => {
@@ -285,7 +204,7 @@ app.get('/api/location/:locationId/blocks/:blockId', async (req, res) => {
     const query = `
       SELECT 
         b.block_id,
-        TO_CHAR(b.start_time, 'YYYY-MM-DD') AS day,
+        TO_CHAR(b.day, 'MM/DD/YYYY') AS formatted_day,
         TO_CHAR(b.start_time, 'HH12:MI AM') AS start_time,
         TO_CHAR(b.end_time, 'HH12:MI AM') AS end_time,
         b.amount,
@@ -319,14 +238,14 @@ app.get('/api/location/:locationId/blocks/:blockId', async (req, res) => {
       phone: row.phone_number,
       email: row.email,
       licenseNumber: row.license_number,
-      licenseValid: new Date(row.license_expiration) > new Date(),
-      registrationValid: new Date(row.registration_date) > new Date(),
-      insuranceValid: new Date(row.insurance_end) > new Date(),
+      licenseValid: row.license_expiration > new Date(),
+      registrationValid: row.registration_date > new Date(),
+      insuranceValid: row.insurance_end > new Date(),
     } : null;
 
     const block = {
       blockId: row.block_id,
-      day: row.day,
+      day: row.formatted_day,
       startTime: row.start_time,
       endTime: row.end_time,
       amount: row.amount,
@@ -342,17 +261,15 @@ app.get('/api/location/:locationId/blocks/:blockId', async (req, res) => {
   }
 });
 
+// ✅ Create a new block
 app.post('/api/blocks', async (req, res) => {
-  const { location_id, start_time, end_time, amount, status } = req.body;
+  const { location_id, start_time, end_time, day, amount, status } = req.body;
 
-  if (!location_id || !start_time || !end_time || !amount) {
+  if (!location_id || !start_time || !end_time || !day || !amount) {
     return res.status(400).json({ success: false, message: 'Missing required fields' });
   }
 
   try {
-    // Derive the day from start_time to avoid mismatches
-    const day = new Date(start_time).toISOString().split('T')[0]; // "YYYY-MM-DD"
-
     const insertQuery = `
       INSERT INTO blocks (location_id, start_time, end_time, day, amount, status)
       VALUES ($1, $2, $3, $4, $5, $6)
@@ -361,9 +278,9 @@ app.post('/api/blocks', async (req, res) => {
 
     const result = await pool.query(insertQuery, [
       location_id,
-      start_time,
-      end_time,
-      day,
+      start_time, // 'HH:MM:SS'
+      end_time,   // 'HH:MM:SS'
+      day,        // 'MM/DD/YYYY' expected from frontend
       amount,
       status || 'available',
     ]);
@@ -395,9 +312,10 @@ app.get('/api/blocks', async (req, res) => {
         TO_CHAR(start_time, 'HH12:MI AM') AS start_time_formatted,
         TO_CHAR(end_time, 'HH12:MI AM') AS end_time_formatted,
         amount,
-        status
+        status,
+        TO_CHAR(day, 'MM/DD/YYYY') AS formatted_day
       FROM blocks
-      WHERE location_id = $1 AND day = $2
+      WHERE location_id = $1 AND day = TO_DATE($2, 'MM/DD/YYYY')
       ORDER BY start_time
     `;
 
@@ -409,7 +327,7 @@ app.get('/api/blocks', async (req, res) => {
   }
 });
 
-// remove th block( includes check if block is claimed and delete block)
+// ✅ Delete block if unclaimed
 app.delete('/api/blocks/:blockId', async (req, res) => {
   const { blockId } = req.params;
 
@@ -418,7 +336,6 @@ app.delete('/api/blocks/:blockId', async (req, res) => {
   }
 
   try {
-    // Check if block is claimed(dependency)
     const checkClaim = await pool.query(
       `SELECT 1 FROM block_claims WHERE block_id = $1`,
       [blockId]
@@ -431,7 +348,6 @@ app.delete('/api/blocks/:blockId', async (req, res) => {
       });
     }
 
-    // Delete block(Dependency)
     await pool.query(`DELETE FROM blocks WHERE block_id = $1`, [blockId]);
 
     res.json({ success: true, message: 'Block deleted successfully' });
@@ -441,10 +357,31 @@ app.delete('/api/blocks/:blockId', async (req, res) => {
   }
 });
 
+// ✅ Get stores linked to a manager
+app.get('/api/my-stores', async (req, res) => {
+  const { managerId } = req.query;
 
+  if (!managerId) {
+    return res.status(400).json({ success: false, message: 'Missing managerId' });
+  }
 
+  try {
+    const query = `
+      SELECT l.store_id AS id, l.city, l.location_id AS "locationId"
+      FROM manager_store_links msl
+      JOIN locations l ON msl.store_id = l.store_id
+      WHERE msl.manager_id = $1
+    `;
+    const result = await pool.query(query, [managerId]);
 
+    res.json({ success: true, stores: result.rows });
+  } catch (err) {
+    console.error('❌ Error fetching manager stores:', err);
+    res.status(500).json({ success: false, message: 'Internal server error' });
+  }
+});
 
+const PORT = process.env.PORT || 5003;
 app.listen(PORT, () => {
   console.log('✅ Manager backend is up and running on port', PORT);
 });
