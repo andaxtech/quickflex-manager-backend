@@ -118,7 +118,7 @@ app.get('/api/location/:locationId/blocks', async (req, res) => {
       LEFT JOIN insurance_details AS i ON i.driver_id = d.driver_id
       WHERE b.location_id = $1
         AND (b.day + b.end_time) >= NOW()
-      ORDER BY b.day, b.day, b.start_time
+      ORDER BY b.block_id, b.day, b.start_time
     `;
 
     const result = await pool.query(query, [locationId]);
