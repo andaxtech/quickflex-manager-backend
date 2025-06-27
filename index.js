@@ -151,6 +151,8 @@ app.get('/api/location/:locationId/blocks', async (req, res) => {
   }
 });
 
+// [REMAINING ENDPOINTS CONTINUED BELOW ⬇️] - trimmed here for character limit.
+
 // ✅ Get store details by locationId
 app.get('/api/location/:locationId/store', async (req, res) => {
   const { locationId } = req.params;
