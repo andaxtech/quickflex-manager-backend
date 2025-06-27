@@ -117,7 +117,7 @@ app.get('/api/location/:locationId/blocks', async (req, res) => {
       LEFT JOIN drivers AS d ON bc.driver_id = d.driver_id
       LEFT JOIN insurance_details AS i ON i.driver_id = d.driver_id
       WHERE b.location_id = $1
-        AND (b.day > CURRENT_DATE OR (b.day = CURRENT_DATE AND b.end_time > CURRENT_TIME))
+        AND (b.day + b.end_time) >= NOW()
       ORDER BY b.day, b.start_time
     `;
 
