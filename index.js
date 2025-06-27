@@ -275,7 +275,14 @@ app.post('/api/blocks', async (req, res) => {
 
     const insertQuery = `
       INSERT INTO blocks (location_id, start_time, end_time, day, amount, status)
-      VALUES ($1, $2, $3, TO_DATE($4, 'MM/DD/YYYY'), $5, $6)
+      VALUES (
+        $1,
+        ($2::timestamptz AT TIME ZONE 'UTC')::time,
+        ($3::timestamptz AT TIME ZONE 'UTC')::time,
+        TO_DATE($4, 'MM/DD/YYYY'),
+        $5,
+        $6
+      )
       RETURNING block_id
     `;
 
