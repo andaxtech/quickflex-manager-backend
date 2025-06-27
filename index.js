@@ -273,6 +273,7 @@ app.post('/api/blocks', async (req, res) => {
 
   try {
     const startDate = new Date(start_time);
+    const dayUTC = startDate.toISOString().slice(0, 10); // "YYYY-MM-DD"
     const formattedDay = `${(startDate.getMonth() + 1).toString().padStart(2, '0')}/${startDate.getDate().toString().padStart(2, '0')}/${startDate.getFullYear()}`;
 
     const insertQuery = `
@@ -281,7 +282,7 @@ app.post('/api/blocks', async (req, res) => {
         $1,
         $2::timestamptz,
         $3::timestamptz,
-        TO_DATE($4, 'MM/DD/YYYY'),
+        TO_DATE($4, 'YYYY-MM-DD'),
         $5,
         $6
       )
