@@ -94,7 +94,7 @@ app.get('/api/location/:locationId/blocks', async (req, res) => {
 
   try {
     const query = `
-      SELECT 
+      SELECT DISTINCT ON (b.block_id)
         b.block_id,
         TO_CHAR(b.day, 'MM/DD/YYYY') AS formatted_day,
         TO_CHAR(b.start_time, 'HH12:MI AM') AS start_time_formatted,
