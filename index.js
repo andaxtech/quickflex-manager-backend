@@ -293,7 +293,7 @@ app.post('/api/blocks', async (req, res) => {
       location_id,
       start_time,
       end_time,
-      formattedDay,
+      dayUTC,
       amount,
       status || 'available',
     ]);
