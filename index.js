@@ -278,7 +278,7 @@ app.post('/api/blocks', async (req, res) => {
         $1,
         $2::timestamptz,
         $3::timestamptz,
-        ($2::timestamptz AT TIME ZONE 'UTC')::date,
+        ($2::timestamptz)::date,
         $4,
         $5
       )
