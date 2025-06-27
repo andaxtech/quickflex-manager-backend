@@ -272,21 +272,15 @@ app.post('/api/blocks', async (req, res) => {
   }
 
   try {
-    const startDate = new Date(start_time);
-    const year = startDate.getUTCFullYear();
-    const month = (startDate.getUTCMonth() + 1).toString().padStart(2, '0');
-    const day = startDate.getUTCDate().toString().padStart(2, '0');
-    const formattedDay = `${year}-${month}-${day}`; // Format matches SQL expectation
-
     const insertQuery = `
       INSERT INTO blocks (location_id, start_time, end_time, day, amount, status)
       VALUES (
         $1,
         $2::timestamptz,
         $3::timestamptz,
-        TO_DATE($4, 'YYYY-MM-DD'),
-        $5,
-        $6
+        ($2::timestamptz AT TIME ZONE 'UTC')::date,
+        $4,
+        $5
       )
       RETURNING block_id
     `;
@@ -295,7 +289,6 @@ app.post('/api/blocks', async (req, res) => {
       location_id,
       start_time,
       end_time,
-      formattedDay,
       amount,
       status || 'available',
     ]);
