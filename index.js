@@ -192,7 +192,7 @@ app.get('/api/location/:locationId/store', async (req, res) => {
   }
 });
 
-// ✅ Get specific block detail + driver info for a location
+// ✅ Get specific block detail + driver info
 app.get('/api/location/:locationId/blocks/:blockId', async (req, res) => {
   const { locationId, blockId } = req.params;
 
@@ -261,15 +261,18 @@ app.get('/api/location/:locationId/blocks/:blockId', async (req, res) => {
   }
 });
 
-// ✅ Create a new block
+// ✅ Create a new block (updated to compute day server-side)
 app.post('/api/blocks', async (req, res) => {
-  const { location_id, start_time, end_time, day, amount, status } = req.body;
+  const { location_id, start_time, end_time, amount, status } = req.body;
 
-  if (!location_id || !start_time || !end_time || !day || !amount) {
+  if (!location_id || !start_time || !end_time || !amount) {
     return res.status(400).json({ success: false, message: 'Missing required fields' });
   }
 
   try {
+    const startDate = new Date(start_time);
+    const formattedDay = `${(startDate.getMonth() + 1).toString().padStart(2, '0')}/${startDate.getDate().toString().padStart(2, '0')}/${startDate.getFullYear()}`;
+
     const insertQuery = `
       INSERT INTO blocks (location_id, start_time, end_time, day, amount, status)
       VALUES ($1, $2, $3, TO_DATE($4, 'MM/DD/YYYY'), $5, $6)
@@ -278,9 +281,9 @@ app.post('/api/blocks', async (req, res) => {
 
     const result = await pool.query(insertQuery, [
       location_id,
-      start_time, // 'HH:MM:SS'
-      end_time,   // 'HH:MM:SS'
-      day,        // 'MM/DD/YYYY' expected from frontend
+      start_time,
+      end_time,
+      formattedDay,
       amount,
       status || 'available',
     ]);
