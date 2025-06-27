@@ -274,7 +274,7 @@ app.post('/api/blocks', async (req, res) => {
   try {
     const startDate = new Date(start_time);
     const dayUTC = startDate.toISOString().slice(0, 10); // "YYYY-MM-DD"
-    const formattedDay = `${(startDate.getMonth() + 1).toString().padStart(2, '0')}/${startDate.getDate().toString().padStart(2, '0')}/${startDate.getFullYear()}`;
+    const formattedDay = `${(startDate.getUTCMonth() + 1).toString().padStart(2, '0')}/${startDate.getUTCDate().toString().padStart(2, '0')}/${startDate.getUTCFullYear()}`;
 
     const insertQuery = `
       INSERT INTO blocks (location_id, start_time, end_time, day, amount, status)
