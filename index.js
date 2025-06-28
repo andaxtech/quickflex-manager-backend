@@ -84,14 +84,15 @@ app.post('/api/verify-store', async (req, res) => {
   }
 });
 
-// ✅ Get blocks for a specific location
-app.get('/api/location/:locationId/blocks', async (req, res) => {
-  const { locationId } = req.params;
+// ✅ New API for Store Schedule View- specific date and location (for calendar view)
+app.get('/api/location/blocks', async (req, res) => {
+  const { location_id, date } = req.query;
+  const locationIdInt = parseInt(location_id);
 
-  if (!locationId) {
-    return res.status(400).json({ success: false, message: 'Missing locationId' });
+  if (!location_id || !date || isNaN(locationIdInt)) {
+    return res.status(400).json({ success: false, message: 'Missing or invalid location_id or date' });
   }
-    //note: grabs the most recent claim
+
   try {
     const query = `
       WITH latest_claims AS (
@@ -103,7 +104,6 @@ app.get('/api/location/:locationId/blocks', async (req, res) => {
         ) sub
         WHERE rn = 1
       )
-
       SELECT
         b.block_id,
         b.date,
@@ -126,15 +126,15 @@ app.get('/api/location/:locationId/blocks', async (req, res) => {
       LEFT JOIN latest_claims lc ON b.block_id = lc.block_id
       LEFT JOIN drivers d ON lc.driver_id = d.driver_id
       LEFT JOIN insurance_details i ON d.driver_id = i.driver_id
-      WHERE b.location_id = $1
-      ORDER BY b.date, b.start_time
+      WHERE b.location_id = $1 AND b.date = $2::date
+      ORDER BY b.start_time
     `;
 
-    const result = await pool.query(query, [locationId]);
+    const result = await pool.query(query, [locationIdInt, date]);
 
     const blocks = result.rows.map((row) => ({
       blockId: row.block_id,
-      date: row.date?.toISOString().split('T')[0] || null, //date: row.date || null,
+      date: row.date?.toISOString().split('T')[0] || null,
       startTime: row.start_time?.toISOString() || null,
       endTime: row.end_time?.toISOString() || null,
       amount: row.amount,
@@ -152,6 +152,14 @@ app.get('/api/location/:locationId/blocks', async (req, res) => {
           }
         : undefined,
     }));
+
+    res.json({ success: true, blocks });
+  } catch (err) {
+    console.error('❌ Error fetching blocks by date and location:', err);
+    res.status(500).json({ success: false, message: 'Internal server error' });
+  }
+});
+
 
     res.json({ success: true, blocks });
   } catch (err) {
