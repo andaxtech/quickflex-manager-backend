@@ -111,7 +111,7 @@ app.get('/api/location/:locationId/blocks', async (req, res) => {
         b.end_time,
         b.amount,
         b.status,
-        bc.claim_time,
+        lc.claim_time,
         d.driver_id,
         d.first_name,
         d.last_name,
@@ -134,7 +134,7 @@ app.get('/api/location/:locationId/blocks', async (req, res) => {
 
     const blocks = result.rows.map((row) => ({
       blockId: row.block_id,
-      date: row.date?.toISOString().split('T')[0] || null,
+      date: row.date?.toISOString().split('T')[0] || null, //date: row.date || null,
       startTime: row.start_time?.toISOString() || null,
       endTime: row.end_time?.toISOString() || null,
       amount: row.amount,
