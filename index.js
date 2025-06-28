@@ -263,11 +263,11 @@ app.get('/api/location/:locationId/blocks/:blockId', async (req, res) => {
   }
 });
 
-// ✅ Create a new block (updated to compute day server-side)
+// ✅ Create a new block 
 app.post('/api/blocks', async (req, res) => {
-  const { location_id, start_time, end_time, amount, status } = req.body;
+  const { location_id, start_time, end_time, day,amount, status } = req.body;
 
-  if (!location_id || !start_time || !end_time || !amount) {
+  if (!location_id || !start_time || !end_time || !day || !amount) {
     return res.status(400).json({ success: false, message: 'Missing required fields' });
   }
 
@@ -278,9 +278,9 @@ app.post('/api/blocks', async (req, res) => {
         $1,
         $2::timestamptz,
         $3::timestamptz,
-        ($2::timestamptz)::date,
-        $4,
-        $5
+        $4::date,
+        $5,
+        $6
       )
       RETURNING block_id
     `;
@@ -289,6 +289,7 @@ app.post('/api/blocks', async (req, res) => {
       location_id,
       start_time,
       end_time,
+      day,
       amount,
       status || 'available',
     ]);
