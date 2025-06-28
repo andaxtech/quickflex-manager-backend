@@ -97,8 +97,8 @@ app.get('/api/location/:locationId/blocks', async (req, res) => {
       SELECT DISTINCT ON (b.block_id)
         b.block_id,
         b.date,
-        b.start_time,
-        b.end_time,
+        (b.date + b.start_time) AS start_time,
+        (b.date + b.end_time) AS end_time,
         b.amount,
         b.status,
         bc.claim_time,
@@ -125,8 +125,8 @@ app.get('/api/location/:locationId/blocks', async (req, res) => {
     const blocks = result.rows.map((row) => ({
       blockId: row.block_id,
       date: row.date,
-      startTime: row.start_time,
-      endTime: row.end_time,
+      startTime: row.start_time.toISOString(), // full UTC timestamp
+      endTime: row.end_time.toISOString(),
       amount: row.amount,
       status: row.status,
       claimTime: row.claim_time,
