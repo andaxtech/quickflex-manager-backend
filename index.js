@@ -97,8 +97,8 @@ app.get('/api/location/:locationId/blocks', async (req, res) => {
       SELECT DISTINCT ON (b.block_id)
         b.block_id,
         b.date,
-        (b.date + b.start_time) AS start_time,
-        (b.date + b.end_time) AS end_time,
+        (b.date::timestamp + b.start_time::time) AS start_time,
+        (b.date::timestamp + b.end_time::time) AS end_time,
         b.amount,
         b.status,
         bc.claim_time,
@@ -117,7 +117,7 @@ app.get('/api/location/:locationId/blocks', async (req, res) => {
       LEFT JOIN drivers AS d ON bc.driver_id = d.driver_id
       LEFT JOIN insurance_details AS i ON i.driver_id = d.driver_id
       WHERE b.location_id = $1
-      ORDER BY b.block_id, b.date, b.start_time
+      ORDER BY  b.date, b.start_time, b.block_id,
     `;
 
     const result = await pool.query(query, [locationId]);
