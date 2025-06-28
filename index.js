@@ -91,10 +91,20 @@ app.get('/api/location/:locationId/blocks', async (req, res) => {
   if (!locationId) {
     return res.status(400).json({ success: false, message: 'Missing locationId' });
   }
-
+    //note: grabs the most recent claim
   try {
     const query = `
-      SELECT DISTINCT ON (b.block_id)
+      WITH latest_claims AS (
+        SELECT *
+        FROM (
+          SELECT *,
+                 ROW_NUMBER() OVER (PARTITION BY block_id ORDER BY claim_time DESC) AS rn
+          FROM block_claims
+        ) sub
+        WHERE rn = 1
+      )
+
+      SELECT
         b.block_id,
         b.date,
         b.start_time,
@@ -113,11 +123,11 @@ app.get('/api/location/:locationId/blocks', async (req, res) => {
         i.start_date AS insurance_start,
         i.end_date AS insurance_end
       FROM blocks AS b
-      LEFT JOIN block_claims AS bc ON b.block_id = bc.block_id
-      LEFT JOIN drivers AS d ON bc.driver_id = d.driver_id
-      LEFT JOIN insurance_details AS i ON i.driver_id = d.driver_id
+      LEFT JOIN latest_claims lc ON b.block_id = lc.block_id
+      LEFT JOIN drivers d ON lc.driver_id = d.driver_id
+      LEFT JOIN insurance_details i ON d.driver_id = i.driver_id
       WHERE b.location_id = $1
-      ORDER BY b.block_id, b.date, b.start_time
+      ORDER BY b.date, b.start_time
     `;
 
     const result = await pool.query(query, [locationId]);
