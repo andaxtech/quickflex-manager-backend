@@ -278,7 +278,7 @@ app.post('/api/blocks', async (req, res) => {
         $3::timestamptz,
         $4,
         $5,
-        $6,
+        $6
       )
       RETURNING block_id
     `;
