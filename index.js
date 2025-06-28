@@ -151,8 +151,6 @@ app.get('/api/location/:locationId/blocks', async (req, res) => {
   }
 });
 
-// [REMAINING ENDPOINTS CONTINUED BELOW ⬇️] - trimmed here for character limit.
-
 // ✅ Get store details by locationId
 app.get('/api/location/:locationId/store', async (req, res) => {
   const { locationId } = req.params;
@@ -247,7 +245,7 @@ app.get('/api/location/:locationId/blocks/:blockId', async (req, res) => {
 
     const block = {
       blockId: row.block_id,
-      date: row.formatted_day,
+      date: row.formatted_date,
       startTime: row.start_time,
       endTime: row.end_time,
       amount: row.amount,
@@ -265,7 +263,7 @@ app.get('/api/location/:locationId/blocks/:blockId', async (req, res) => {
 
 // ✅ Create a new block 
 app.post('/api/blocks', async (req, res) => {
-  const { location_id, start_time, end_time,amount, status, date } = req.body;
+  const { location_id, start_time, end_time, amount, status, date } = req.body;
 
   if (!location_id || !start_time || !end_time || !date || !amount) {
     return res.status(400).json({ success: false, message: 'Missing required fields' });
@@ -278,9 +276,9 @@ app.post('/api/blocks', async (req, res) => {
         $1,
         $2::timestamptz,
         $3::timestamptz,
+        $4,
         $5,
         $6,
-        $7
       )
       RETURNING block_id
     `;
@@ -305,13 +303,13 @@ app.post('/api/blocks', async (req, res) => {
   }
 });
 
-// ✅ Get blocks for a specific day and location
+// ✅ Get blocks for a specific date and location
 app.get('/api/blocks', async (req, res) => {
   const { location_id, date } = req.query;
 
   const locationIdInt = parseInt(location_id);
   if (!location_id || !date || isNaN(locationIdInt)) {
-    return res.status(400).json({ success: false, message: 'Missing or invalid location_id or day' });
+    return res.status(400).json({ success: false, message: 'Missing or invalid location_id or date' });
   }
 
   try {
@@ -326,14 +324,14 @@ app.get('/api/blocks', async (req, res) => {
         status,
         TO_CHAR(date, 'MM/DD/YYYY') AS formatted_date
       FROM blocks
-      WHERE location_id = $1 AND date = TO_DATE($2, 'MM/DD/YYYY')
+      WHERE location_id = $1 AND date = $2::date
       ORDER BY start_time
     `;
 
     const result = await pool.query(query, [locationIdInt, date]);
     res.json({ success: true, blocks: result.rows });
   } catch (err) {
-    console.error('❌ Error fetching blocks by day:', err);
+    console.error('❌ Error fetching blocks by date:', err);
     res.status(500).json({ success: false, message: 'Internal server error' });
   }
 });
