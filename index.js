@@ -97,8 +97,8 @@ app.get('/api/location/:locationId/blocks', async (req, res) => {
       SELECT DISTINCT ON (b.block_id)
         b.block_id,
         b.date,
-        (b.date::timestamp + b.start_time::time) AS start_time,
-        (b.date::timestamp + b.end_time::time) AS end_time,
+        b.start_time,
+        b.end_time,
         b.amount,
         b.status,
         bc.claim_time,
