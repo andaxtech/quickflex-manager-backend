@@ -160,14 +160,6 @@ app.get('/api/location/blocks', async (req, res) => {
   }
 });
 
-
-    res.json({ success: true, blocks });
-  } catch (err) {
-    console.error('❌ Error fetching blocks by location:', err);
-    res.status(500).json({ success: false, message: 'Internal server error' });
-  }
-});
-
 // ✅ Get store details by locationId
 app.get('/api/location/:locationId/store', async (req, res) => {
   const { locationId } = req.params;
