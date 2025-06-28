@@ -96,7 +96,7 @@ app.get('/api/location/:locationId/blocks', async (req, res) => {
     const query = `
       SELECT DISTINCT ON (b.block_id)
         b.block_id,
-        TO_CHAR(b.day, 'MM/DD/YYYY') AS formatted_day,
+        TO_CHAR(b.date, 'MM/DD/YYYY') AS formatted_date,
         TO_CHAR(b.start_time, 'HH12:MI AM') AS start_time_formatted,
         TO_CHAR(b.end_time, 'HH12:MI AM') AS end_time_formatted,
         b.amount,
@@ -117,15 +117,15 @@ app.get('/api/location/:locationId/blocks', async (req, res) => {
       LEFT JOIN drivers AS d ON bc.driver_id = d.driver_id
       LEFT JOIN insurance_details AS i ON i.driver_id = d.driver_id
       WHERE b.location_id = $1
-        AND (b.day + b.end_time) AT TIME ZONE 'UTC' >= NOW()
-      ORDER BY b.block_id, b.day, b.start_time
+        AND (b.date + b.end_time) AT TIME ZONE 'UTC' >= NOW()
+      ORDER BY b.block_id, b.date, b.start_time
     `;
 
     const result = await pool.query(query, [locationId]);
 
     const blocks = result.rows.map((row) => ({
       blockId: row.block_id,
-      day: row.formatted_day,
+      date: row.formatted_date,
       startTime: row.start_time_formatted,
       endTime: row.end_time_formatted,
       amount: row.amount,
@@ -206,7 +206,7 @@ app.get('/api/location/:locationId/blocks/:blockId', async (req, res) => {
     const query = `
       SELECT 
         b.block_id,
-        TO_CHAR(b.day, 'MM/DD/YYYY') AS formatted_day,
+        TO_CHAR(b.date, 'MM/DD/YYYY') AS formatted_date,
         TO_CHAR(b.start_time, 'HH12:MI AM') AS start_time,
         TO_CHAR(b.end_time, 'HH12:MI AM') AS end_time,
         b.amount,
@@ -247,7 +247,7 @@ app.get('/api/location/:locationId/blocks/:blockId', async (req, res) => {
 
     const block = {
       blockId: row.block_id,
-      day: row.formatted_day,
+      date: row.formatted_day,
       startTime: row.start_time,
       endTime: row.end_time,
       amount: row.amount,
@@ -265,20 +265,19 @@ app.get('/api/location/:locationId/blocks/:blockId', async (req, res) => {
 
 // ✅ Create a new block 
 app.post('/api/blocks', async (req, res) => {
-  const { location_id, start_time, end_time, day,amount, status, date } = req.body;
+  const { location_id, start_time, end_time,amount, status, date } = req.body;
 
-  if (!location_id || !start_time || !end_time || !day || !amount) {
+  if (!location_id || !start_time || !end_time || !date || !amount) {
     return res.status(400).json({ success: false, message: 'Missing required fields' });
   }
 
   try {
     const insertQuery = `
-      INSERT INTO blocks (location_id, start_time, end_time, day, amount, status, date)
+      INSERT INTO blocks (location_id, start_time, end_time, amount, status, date)
       VALUES (
         $1,
         $2::timestamptz,
         $3::timestamptz,
-        $4::date,
         $5,
         $6,
         $7
@@ -290,7 +289,6 @@ app.post('/api/blocks', async (req, res) => {
       location_id,
       start_time,
       end_time,
-      day,
       amount,
       status || 'available',
       date,
@@ -309,10 +307,10 @@ app.post('/api/blocks', async (req, res) => {
 
 // ✅ Get blocks for a specific day and location
 app.get('/api/blocks', async (req, res) => {
-  const { location_id, day } = req.query;
+  const { location_id, date } = req.query;
 
   const locationIdInt = parseInt(location_id);
-  if (!location_id || !day || isNaN(locationIdInt)) {
+  if (!location_id || !date || isNaN(locationIdInt)) {
     return res.status(400).json({ success: false, message: 'Missing or invalid location_id or day' });
   }
 
@@ -326,13 +324,13 @@ app.get('/api/blocks', async (req, res) => {
         TO_CHAR(end_time, 'HH12:MI AM') AS end_time_formatted,
         amount,
         status,
-        TO_CHAR(day, 'MM/DD/YYYY') AS formatted_day
+        TO_CHAR(date, 'MM/DD/YYYY') AS formatted_date
       FROM blocks
-      WHERE location_id = $1 AND day = TO_DATE($2, 'MM/DD/YYYY')
+      WHERE location_id = $1 AND date = TO_DATE($2, 'MM/DD/YYYY')
       ORDER BY start_time
     `;
 
-    const result = await pool.query(query, [locationIdInt, day]);
+    const result = await pool.query(query, [locationIdInt, date]);
     res.json({ success: true, blocks: result.rows });
   } catch (err) {
     console.error('❌ Error fetching blocks by day:', err);
