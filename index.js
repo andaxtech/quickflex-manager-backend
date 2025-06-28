@@ -293,6 +293,7 @@ app.post('/api/blocks', async (req, res) => {
       day,
       amount,
       status || 'available',
+      date,
     ]);
 
     res.status(201).json({
