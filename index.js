@@ -111,7 +111,7 @@ app.get('/api/location/:locationId/blocks', async (req, res) => {
         d.license_expiration,
         d.registration_date,
         i.start_date AS insurance_start,
-        i.end_date AS insurance_end,
+        i.end_date AS insurance_end
       FROM blocks AS b
       LEFT JOIN block_claims AS bc ON b.block_id = bc.block_id
       LEFT JOIN drivers AS d ON bc.driver_id = d.driver_id
