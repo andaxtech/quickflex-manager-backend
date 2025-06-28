@@ -117,7 +117,7 @@ app.get('/api/location/:locationId/blocks', async (req, res) => {
       LEFT JOIN drivers AS d ON bc.driver_id = d.driver_id
       LEFT JOIN insurance_details AS i ON i.driver_id = d.driver_id
       WHERE b.location_id = $1
-      ORDER BY b.date, b.start_time, b.block_id
+      ORDER BY b.block_id, b.date, b.start_time
     `;
 
     const result = await pool.query(query, [locationId]);
