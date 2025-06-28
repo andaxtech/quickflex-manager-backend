@@ -134,7 +134,7 @@ app.get('/api/location/:locationId/blocks', async (req, res) => {
 
     const blocks = result.rows.map((row) => ({
       blockId: row.block_id,
-      date: row.date,
+      date: row.date?.toISOString().split('T')[0] || null,
       startTime: row.start_time?.toISOString() || null,
       endTime: row.end_time?.toISOString() || null,
       amount: row.amount,
