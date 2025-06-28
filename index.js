@@ -265,7 +265,7 @@ app.get('/api/location/:locationId/blocks/:blockId', async (req, res) => {
 
 // ✅ Create a new block 
 app.post('/api/blocks', async (req, res) => {
-  const { location_id, start_time, end_time, day,amount, status } = req.body;
+  const { location_id, start_time, end_time, day,amount, status, date } = req.body;
 
   if (!location_id || !start_time || !end_time || !day || !amount) {
     return res.status(400).json({ success: false, message: 'Missing required fields' });
@@ -273,14 +273,15 @@ app.post('/api/blocks', async (req, res) => {
 
   try {
     const insertQuery = `
-      INSERT INTO blocks (location_id, start_time, end_time, day, amount, status)
+      INSERT INTO blocks (location_id, start_time, end_time, day, amount, status, date)
       VALUES (
         $1,
         $2::timestamptz,
         $3::timestamptz,
         $4::date,
         $5,
-        $6
+        $6,
+        $7
       )
       RETURNING block_id
     `;
