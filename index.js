@@ -117,7 +117,6 @@ app.get('/api/location/:locationId/blocks', async (req, res) => {
       LEFT JOIN drivers AS d ON bc.driver_id = d.driver_id
       LEFT JOIN insurance_details AS i ON i.driver_id = d.driver_id
       WHERE b.location_id = $1
-        AND (b.date > CURRENT_DATE OR (b.date = CURRENT_DATE AND b.end_time::time > CURRENT_TIME))
       ORDER BY b.block_id, b.date, b.start_time
     `;
 
