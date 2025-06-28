@@ -96,9 +96,9 @@ app.get('/api/location/:locationId/blocks', async (req, res) => {
     const query = `
       SELECT DISTINCT ON (b.block_id)
         b.block_id,
-        TO_CHAR(b.date, 'MM/DD/YYYY') AS formatted_date,
-        TO_CHAR(b.start_time, 'HH12:MI AM') AS start_time_formatted,
-        TO_CHAR(b.end_time, 'HH12:MI AM') AS end_time_formatted,
+        b.date,
+        b.start_time,
+        b.end_time,
         b.amount,
         b.status,
         bc.claim_time,
@@ -124,9 +124,9 @@ app.get('/api/location/:locationId/blocks', async (req, res) => {
 
     const blocks = result.rows.map((row) => ({
       blockId: row.block_id,
-      date: row.formatted_date,
-      startTime: row.start_time_formatted,
-      endTime: row.end_time_formatted,
+      date: row.date,
+      startTime: row.start_time,
+      endTime: row.end_time,
       amount: row.amount,
       status: row.status,
       claimTime: row.claim_time,
@@ -203,9 +203,9 @@ app.get('/api/location/:locationId/blocks/:blockId', async (req, res) => {
     const query = `
       SELECT 
         b.block_id,
-        TO_CHAR(b.date, 'MM/DD/YYYY') AS formatted_date,
-        TO_CHAR(b.start_time, 'HH12:MI AM') AS start_time,
-        TO_CHAR(b.end_time, 'HH12:MI AM') AS end_time,
+        b.date,
+        b.start_time,
+        b.end_time,
         b.amount,
         b.status,
         bc.claim_time,
@@ -317,11 +317,11 @@ app.get('/api/blocks', async (req, res) => {
         block_id,
         start_time,
         end_time,
-        TO_CHAR(start_time, 'HH12:MI AM') AS start_time_formatted,
-        TO_CHAR(end_time, 'HH12:MI AM') AS end_time_formatted,
+        start_time,
+        end_time,
         amount,
         status,
-        TO_CHAR(date, 'MM/DD/YYYY') AS formatted_date
+        date
       FROM blocks
       WHERE location_id = $1 AND date = $2::date
       ORDER BY start_time
