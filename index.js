@@ -360,7 +360,7 @@ app.delete('/api/blocks/:blockId', async (req, res) => {
   try {
     // Check if the block has any active claims
     const { rows: claimRows } = await pool.query(
-      `SELECT SELECT claim_id FROM block_claims
+      `SELECT claim_id FROM block_claims
        WHERE block_id = $1
        ORDER BY claim_time DESC
        LIMIT 1
