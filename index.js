@@ -358,19 +358,30 @@ app.delete('/api/blocks/:blockId', async (req, res) => {
   }
 
   try {
-    const checkClaim = await pool.query(
-      `SELECT 1 FROM block_claims WHERE block_id = $1`,
+    // Check if the block has any active claims
+    const { rows: claimRows } = await pool.query(
+      `SELECT SELECT claim_id FROM block_claims
+       WHERE block_id = $1
+       ORDER BY claim_time DESC
+       LIMIT 1
+       `,
       [blockId]
     );
 
     if (checkClaim.rows.length > 0) {
-      return res.status(400).json({
+      return res.status(403).json({
         success: false,
         message: 'Cannot delete block — it is already claimed',
+        claimId: claimRows[0].claim_id,
       });
     }
 
-    await pool.query(`DELETE FROM blocks WHERE block_id = $1`, [blockId]);
+    // Proceed with delete
+    const result = await pool.query(`DELETE FROM blocks WHERE block_id = $1`, [blockId]);
+
+    if (result.rowCount === 0) {
+     return res.status(404).json({ success: false, message: 'Block not found' });
+    }
 
     res.json({ success: true, message: 'Block deleted successfully' });
   } catch (err) {
