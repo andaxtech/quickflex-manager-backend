@@ -120,7 +120,7 @@ app.get('/api/location/blocks', async (req, res) => {
         d.email,
         d.license_number,
         d.license_expiration,
-        d.registration_date,
+        d.registration_expiration_date,
         i.start_date AS insurance_start,
         i.end_date AS insurance_end
       FROM blocks AS b
@@ -149,7 +149,7 @@ app.get('/api/location/blocks', async (req, res) => {
             email: row.email,
             licenseNumber: row.license_number,
             licenseValid: row.license_expiration > new Date(),
-            registrationValid: row.registration_date > new Date(),
+            registrationValid: row.registration_expiration_date > new Date(),
             insuranceValid: row.insurance_end > new Date(),
           }
         : undefined,
@@ -228,7 +228,7 @@ app.get('/api/location/:locationId/blocks/:blockId', async (req, res) => {
         d.email,
         d.license_number,
         d.license_expiration,
-        d.registration_date,
+        d.registration_expiration_date,
         i.end_date AS insurance_end
       FROM blocks b
       LEFT JOIN block_claims bc ON b.block_id = bc.block_id
@@ -251,7 +251,7 @@ app.get('/api/location/:locationId/blocks/:blockId', async (req, res) => {
       email: row.email,
       licenseNumber: row.license_number,
       licenseValid: row.license_expiration > new Date(),
-      registrationValid: row.registration_date > new Date(),
+      registrationValid: row.registration_expiration_date > new Date(),
       insuranceValid: row.insurance_end > new Date(),
     } : null;
 
