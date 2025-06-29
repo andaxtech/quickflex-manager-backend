@@ -358,17 +358,18 @@ app.delete('/api/blocks/:blockId', async (req, res) => {
   }
 
   try {
-    // Check if the block has any active claims
-    const { rows: claimRows } = await pool.query(
-      `SELECT claim_id FROM block_claims
-       WHERE block_id = $1
-       ORDER BY claim_time DESC
-       LIMIT 1
-       `,
-      [blockId]
-    );
+    console.log('🧪 Deleting blockId:', blockId);
 
-    if (checkClaim.rows.length > 0) {
+    const claimCheckQuery = `
+      SELECT claim_id FROM block_claims
+      WHERE block_id = $1
+      ORDER BY claim_time DESC
+      LIMIT 1
+    `;
+    const { rows: claimRows } = await pool.query(claimCheckQuery, [blockId]);
+
+    if (claimRows.length > 0) {
+      console.log('⚠️ Block is claimed, claim_id:', claimRows[0].claim_id);
       return res.status(403).json({
         success: false,
         message: 'Cannot delete block — it is already claimed',
@@ -376,19 +377,22 @@ app.delete('/api/blocks/:blockId', async (req, res) => {
       });
     }
 
-    // Proceed with delete
-    const result = await pool.query(`DELETE FROM blocks WHERE block_id = $1`, [blockId]);
+    const deleteQuery = `DELETE FROM blocks WHERE block_id = $1`;
+    const result = await pool.query(deleteQuery, [blockId]);
 
     if (result.rowCount === 0) {
-     return res.status(404).json({ success: false, message: 'Block not found' });
+      console.warn('❌ No block found to delete for blockId:', blockId);
+      return res.status(404).json({ success: false, message: 'Block not found' });
     }
 
+    console.log('✅ Block deleted:', blockId);
     res.json({ success: true, message: 'Block deleted successfully' });
   } catch (err) {
-    console.error('❌ Error deleting block:', err);
+    console.error('❌ Error deleting block:', err.stack || err);
     res.status(500).json({ success: false, message: 'Internal server error' });
   }
 });
+
 
 // ✅ Get stores linked to a manager
 app.get('/api/my-stores', async (req, res) => {
