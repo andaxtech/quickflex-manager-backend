@@ -98,7 +98,7 @@ app.get('/api/location/blocks', async (req, res) => {
       WITH latest_claims AS (
         SELECT *
         FROM (
-          SELECT *,
+          SELECT claim_id, block_id, driver_id, claim_time,
                  ROW_NUMBER() OVER (PARTITION BY block_id ORDER BY claim_time DESC) AS rn
           FROM block_claims
         ) sub
@@ -112,6 +112,7 @@ app.get('/api/location/blocks', async (req, res) => {
         b.amount,
         b.status,
         lc.claim_time,
+        lc.claim_id,
         d.driver_id,
         d.first_name,
         d.last_name,
@@ -140,6 +141,7 @@ app.get('/api/location/blocks', async (req, res) => {
       amount: row.amount,
       status: row.status,
       claimTime: row.claim_time,
+      claimId: row.claim_id,
       driver: row.driver_id
         ? {
             fullName: `${row.first_name} ${row.last_name}`,
@@ -219,6 +221,7 @@ app.get('/api/location/:locationId/blocks/:blockId', async (req, res) => {
         b.amount,
         b.status,
         bc.claim_time,
+        bc.claim_id
         d.first_name,
         d.last_name,
         d.phone_number,
@@ -260,6 +263,7 @@ app.get('/api/location/:locationId/blocks/:blockId', async (req, res) => {
       amount: row.amount,
       status: row.status,
       claimTime: row.claim_time,
+      claimId: row.claim_id,
       driver,
     };
 
