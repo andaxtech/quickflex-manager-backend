@@ -221,7 +221,7 @@ app.get('/api/location/:locationId/blocks/:blockId', async (req, res) => {
         b.amount,
         b.status,
         bc.claim_time,
-        bc.claim_id
+        bc.claim_id,
         d.first_name,
         d.last_name,
         d.phone_number,
@@ -329,8 +329,6 @@ app.get('/api/blocks', async (req, res) => {
     const query = `
       SELECT 
         block_id,
-        start_time,
-        end_time,
         start_time,
         end_time,
         amount,
