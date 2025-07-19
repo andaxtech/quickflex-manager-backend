@@ -172,7 +172,7 @@ app.get('/api/location/:locationId/store', async (req, res) => {
 
   try {
     const result = await pool.query(
-      `SELECT store_id, phone, street_name, city, region, postal_code 
+      `SELECT store_id, phone, street_name, city, region, postal_code, time_zone_code 
        FROM locations 
        WHERE location_id = $1 
        LIMIT 1`,
@@ -195,6 +195,7 @@ app.get('/api/location/:locationId/store', async (req, res) => {
         city: row.city,
         region: row.region,
         postalCode: row.postal_code,
+        TimeZoneCode: row.time_zone_code, // <-- add this line!
       },
     });
   } catch (err) {
