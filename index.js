@@ -288,8 +288,8 @@ app.post('/api/blocks', async (req, res) => {
       INSERT INTO blocks (location_id, start_time, end_time, amount, status, date, device_local_time, device_timezone_offset)
       VALUES (
         $1,
-        $2::timestamptz,
-        $3::timestamptz,
+        $2::timestampt,
+        $3::timestampt,
         $4,
         $5,
         $6,
