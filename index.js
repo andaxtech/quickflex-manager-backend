@@ -84,6 +84,9 @@ app.post('/api/verify-store', async (req, res) => {
   }
 });
 
+
+
+
 // ✅ New API for Store Schedule View- specific date and location (for calendar view)
 app.get('/api/location/blocks', async (req, res) => {
   const { location_id, date } = req.query;
@@ -162,7 +165,11 @@ app.get('/api/location/blocks', async (req, res) => {
   }
 });
 
-// ✅ Get store details by locationId
+
+
+
+
+// ✅ Get store details by locationId- new version- Modal.tsx
 app.get('/api/location/:locationId/store', async (req, res) => {
   const { locationId } = req.params;
 
@@ -195,7 +202,7 @@ app.get('/api/location/:locationId/store', async (req, res) => {
         city: row.city,
         region: row.region,
         postalCode: row.postal_code,
-        TimeZoneCode: row.time_zone_code, // <-- add this line!
+        TimeZoneCode: row.time_zone_code,
       },
     });
   } catch (err) {
@@ -203,6 +210,10 @@ app.get('/api/location/:locationId/store', async (req, res) => {
     res.status(500).json({ success: false, message: 'Internal server error' });
   }
 });
+
+
+
+
 
 // ✅ Get specific block detail + driver info
 app.get('/api/location/:locationId/blocks/:blockId', async (req, res) => {
@@ -275,28 +286,67 @@ app.get('/api/location/:locationId/blocks/:blockId', async (req, res) => {
   }
 });
 
+
+
+//used in modal.tsx- new version- modal.tsx
 // ✅ Create a new block 
 app.post('/api/blocks', async (req, res) => {
-  const { location_id, start_time, end_time, amount, status, date, device_local_time, device_timezone_offset } = req.body;
+  const { 
+    location_id, 
+    start_time, 
+    end_time, 
+    amount, 
+    status, 
+    date, 
+    device_local_time, 
+    device_timezone_offset,
+    device_time_zone_name  // Added this field
+  } = req.body;
 
   if (!location_id || !start_time || !end_time || !date || !amount) {
     return res.status(400).json({ success: false, message: 'Missing required fields' });
   }
 
   try {
+    // Validate that start_time and end_time are valid ISO strings
+    const startDate = new Date(start_time);
+    const endDate = new Date(end_time);
+    
+    if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
+      return res.status(400).json({ success: false, message: 'Invalid datetime format' });
+    }
+
+    // Ensure end time is after start time
+    if (endDate <= startDate) {
+      return res.status(400).json({ success: false, message: 'End time must be after start time' });
+    }
+
     const insertQuery = `
-      INSERT INTO blocks (location_id, start_time, end_time, amount, status, date, device_local_time, device_timezone_offset)
+      INSERT INTO blocks (
+        location_id, 
+        start_time, 
+        end_time, 
+        amount, 
+        status, 
+        date, 
+        device_local_time, 
+        device_timezone_offset,
+        device_time_zone_name,
+        created_at
+      )
       VALUES (
         $1,
-        $2::timestamp,
-        $3::timestamp,
+        $2::timestamptz,  -- Use timestamptz to preserve timezone info
+        $3::timestamptz,  -- Use timestamptz to preserve timezone info
         $4,
         $5,
-        $6,
-        $7,   -- no cast!
-        $8
+        $6::date,
+        $7,
+        $8,
+        $9,
+        NOW()
       )
-      RETURNING block_id
+      RETURNING block_id, start_time, end_time
     `;
 
     const result = await pool.query(insertQuery, [
@@ -308,19 +358,43 @@ app.post('/api/blocks', async (req, res) => {
       date,
       device_local_time || null,
       device_timezone_offset || null,
+      device_time_zone_name || null
     ]);
+
+    const createdBlock = result.rows[0];
 
     res.status(201).json({
       success: true,
       message: 'Block created successfully',
-      blockId: result.rows[0].block_id,
+      blockId: createdBlock.block_id,
+      block: {
+        block_id: createdBlock.block_id,
+        start_time: createdBlock.start_time.toISOString(),
+        end_time: createdBlock.end_time.toISOString(),
+        amount,
+        status: status || 'available',
+        date
+      }
     });
   } catch (err) {
     console.error('❌ Error inserting block:', err);
+    
+    // Provide more specific error messages
+    if (err.code === '23505') { // Unique constraint violation
+      return res.status(409).json({ 
+        success: false, 
+        message: 'Block already exists for this time slot' 
+      });
+    }
+    
     res.status(500).json({ success: false, message: 'Database insert error' });
   }
 });
 
+
+
+
+//used in modal.tsx- new version-modal.tsx
 // ✅ Get blocks for a specific date and location
 app.get('/api/blocks', async (req, res) => {
   const { location_id, date } = req.query;
@@ -334,18 +408,30 @@ app.get('/api/blocks', async (req, res) => {
     const query = `
       SELECT 
         block_id,
-        start_time,
-        end_time,
+        start_time AT TIME ZONE 'UTC' as start_time,
+        end_time AT TIME ZONE 'UTC' as end_time,
         amount,
         status,
-        date
+        date,
+        device_local_time,
+        device_timezone_offset,
+        device_time_zone_name,
+        created_at
       FROM blocks
       WHERE location_id = $1 AND date = $2::date
       ORDER BY start_time
     `;
 
     const result = await pool.query(query, [locationIdInt, date]);
-    res.json({ success: true, blocks: result.rows });
+    
+    // Ensure timestamps are returned as ISO strings
+    const blocks = result.rows.map(block => ({
+      ...block,
+      start_time: block.start_time instanceof Date ? block.start_time.toISOString() : block.start_time,
+      end_time: block.end_time instanceof Date ? block.end_time.toISOString() : block.end_time
+    }));
+
+    res.json({ success: true, blocks });
   } catch (err) {
     console.error('❌ Error fetching blocks by date:', err);
     res.status(500).json({ success: false, message: 'Internal server error' });
