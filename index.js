@@ -202,7 +202,7 @@ app.get('/api/location/:locationId/store', async (req, res) => {
         city: row.city,
         region: row.region,
         postalCode: row.postal_code,
-        TimeZoneCode: row.time_zone_code,
+        timeZoneCode: row.time_zone_code,
       },
     });
   } catch (err) {
