@@ -468,7 +468,7 @@ app.post('/api/blocks', async (req, res) => {
 
 
 
-/ Also update the GET /api/blocks to include manager info
+// Also update the GET /api/blocks to include manager info
 app.get('/api/blocks', async (req, res) => {
   const { location_id, date } = req.query;
 
