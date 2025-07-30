@@ -301,6 +301,9 @@ app.get('/api/location/:locationId/blocks/:blockId', async (req, res) => {
 // Updated create block API in manager backend
 // Replace the existing /api/blocks POST endpoint with this version
 
+// Fixed create block API in manager backend
+// This should replace your existing /api/blocks POST endpoint
+
 app.post('/api/blocks', async (req, res) => {
   const { 
     location_id, 
@@ -381,7 +384,7 @@ app.post('/api/blocks', async (req, res) => {
         device_local_time, 
         device_timezone_offset,
         device_time_zone_name,
-        manager_id,  -- ADD: Include manager_id
+        manager_id,
         created_at
       )
       VALUES (
@@ -394,7 +397,7 @@ app.post('/api/blocks', async (req, res) => {
         $7,
         $8,
         $9,
-        $10,  -- manager_id
+        $10,
         NOW()
       )
       RETURNING block_id, start_time, end_time, manager_id
