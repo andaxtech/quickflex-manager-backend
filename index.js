@@ -88,6 +88,7 @@ app.post('/api/verify-store', async (req, res) => {
 
 
 // ✅ New API for Store Schedule View- specific date and location (for calendar view)
+// Also update GET /api/location/blocks to include manager info
 app.get('/api/location/blocks', async (req, res) => {
   const { location_id, date } = req.query;
   const locationIdInt = parseInt(location_id);
@@ -114,6 +115,7 @@ app.get('/api/location/blocks', async (req, res) => {
         b.end_time,
         b.amount,
         b.status,
+        b.manager_id,  -- ADD: Include manager_id
         lc.claim_time,
         lc.claim_id,
         d.driver_id,
@@ -125,11 +127,14 @@ app.get('/api/location/blocks', async (req, res) => {
         d.license_expiration,
         d.registration_expiration_date,
         i.start_date AS insurance_start,
-        i.end_date AS insurance_end
+        i.end_date AS insurance_end,
+        m.first_name as manager_first_name,  -- ADD: Manager info
+        m.last_name as manager_last_name
       FROM blocks AS b
       LEFT JOIN latest_claims lc ON b.block_id = lc.block_id
       LEFT JOIN drivers d ON lc.driver_id = d.driver_id
       LEFT JOIN insurance_details i ON d.driver_id = i.driver_id
+      LEFT JOIN managers m ON b.manager_id = m.manager_id  -- ADD: Join with managers
       WHERE b.location_id = $1 AND b.date = $2::date
       ORDER BY b.start_time
     `;
@@ -145,6 +150,11 @@ app.get('/api/location/blocks', async (req, res) => {
       status: row.status,
       claimTime: row.claim_time,
       claimId: row.claim_id,
+      managerId: row.manager_id,  // ADD: Include manager_id
+      createdBy: row.manager_id ? {  // ADD: Manager who created the block
+        id: row.manager_id,
+        name: `${row.manager_first_name || ''} ${row.manager_last_name || ''}`.trim()
+      } : null,
       driver: row.driver_id
         ? {
             fullName: `${row.first_name} ${row.last_name}`,
@@ -288,8 +298,9 @@ app.get('/api/location/:locationId/blocks/:blockId', async (req, res) => {
 
 
 
-//used in modal.tsx- new version- modal.tsx
-// ✅ Create a new block 
+// Updated create block API in manager backend
+// Replace the existing /api/blocks POST endpoint with this version
+
 app.post('/api/blocks', async (req, res) => {
   const { 
     location_id, 
@@ -300,27 +311,65 @@ app.post('/api/blocks', async (req, res) => {
     date, 
     device_local_time, 
     device_timezone_offset,
-    device_time_zone_name  // Added this field
+    device_time_zone_name,
+    manager_id  // ADD: New required field
   } = req.body;
 
-  if (!location_id || !start_time || !end_time || !date || !amount) {
-    return res.status(400).json({ success: false, message: 'Missing required fields' });
+  // Updated validation to include manager_id
+  if (!location_id || !start_time || !end_time || !date || !amount || !manager_id) {
+    return res.status(400).json({ 
+      success: false, 
+      message: 'Missing required fields. Required: location_id, start_time, end_time, date, amount, manager_id' 
+    });
   }
 
+  const client = await pool.connect();
+
   try {
+    await client.query('BEGIN');
+
     // Validate that start_time and end_time are valid ISO strings
     const startDate = new Date(start_time);
     const endDate = new Date(end_time);
     
     if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
-      return res.status(400).json({ success: false, message: 'Invalid datetime format' });
+      throw new Error('Invalid datetime format');
     }
 
     // Ensure end time is after start time
     if (endDate <= startDate) {
-      return res.status(400).json({ success: false, message: 'End time must be after start time' });
+      throw new Error('End time must be after start time');
     }
 
+    // Verify manager exists and has access to this location
+    const managerCheckQuery = `
+      SELECT 
+        m.manager_id, 
+        m.first_name, 
+        m.last_name,
+        m.status,
+        msl.store_id,
+        l.location_id
+      FROM managers m
+      INNER JOIN manager_store_links msl ON m.manager_id = msl.manager_id
+      INNER JOIN locations l ON msl.store_id = l.store_id
+      WHERE m.manager_id = $1 AND l.location_id = $2
+    `;
+
+    const managerResult = await client.query(managerCheckQuery, [manager_id, location_id]);
+
+    if (managerResult.rowCount === 0) {
+      throw new Error('Manager does not have permission to create blocks for this location');
+    }
+
+    const manager = managerResult.rows[0];
+
+    // Check if manager is active
+    if (manager.status !== 'active') {
+      throw new Error('Manager account is not active');
+    }
+
+    // Insert the block with manager_id
     const insertQuery = `
       INSERT INTO blocks (
         location_id, 
@@ -332,24 +381,26 @@ app.post('/api/blocks', async (req, res) => {
         device_local_time, 
         device_timezone_offset,
         device_time_zone_name,
+        manager_id,  -- ADD: Include manager_id
         created_at
       )
       VALUES (
         $1,
-        $2::timestamptz,  -- Use timestamptz to preserve timezone info
-        $3::timestamptz,  -- Use timestamptz to preserve timezone info
+        $2::timestamptz,
+        $3::timestamptz,
         $4,
         $5,
         $6::date,
         $7,
         $8,
         $9,
+        $10,  -- manager_id
         NOW()
       )
-      RETURNING block_id, start_time, end_time
+      RETURNING block_id, start_time, end_time, manager_id
     `;
 
-    const result = await pool.query(insertQuery, [
+    const result = await client.query(insertQuery, [
       location_id,
       start_time,
       end_time,
@@ -358,10 +409,15 @@ app.post('/api/blocks', async (req, res) => {
       date,
       device_local_time || null,
       device_timezone_offset || null,
-      device_time_zone_name || null
+      device_time_zone_name || null,
+      manager_id
     ]);
 
     const createdBlock = result.rows[0];
+
+    await client.query('COMMIT');
+
+    console.log(`✅ Block ${createdBlock.block_id} created by manager ${manager_id} (${manager.first_name} ${manager.last_name})`);
 
     res.status(201).json({
       success: true,
@@ -373,10 +429,16 @@ app.post('/api/blocks', async (req, res) => {
         end_time: createdBlock.end_time.toISOString(),
         amount,
         status: status || 'available',
-        date
+        date,
+        manager_id: createdBlock.manager_id,
+        created_by: {
+          id: manager.manager_id,
+          name: `${manager.first_name} ${manager.last_name}`
+        }
       }
     });
   } catch (err) {
+    await client.query('ROLLBACK');
     console.error('❌ Error inserting block:', err);
     
     // Provide more specific error messages
@@ -387,15 +449,23 @@ app.post('/api/blocks', async (req, res) => {
       });
     }
     
+    if (err.message) {
+      return res.status(400).json({ 
+        success: false, 
+        message: err.message 
+      });
+    }
+    
     res.status(500).json({ success: false, message: 'Database insert error' });
+  } finally {
+    client.release();
   }
 });
 
 
 
 
-//used in modal.tsx- new version-modal.tsx
-// ✅ Get blocks for a specific date and location
+/ Also update the GET /api/blocks to include manager info
 app.get('/api/blocks', async (req, res) => {
   const { location_id, date } = req.query;
 
@@ -407,28 +477,36 @@ app.get('/api/blocks', async (req, res) => {
   try {
     const query = `
       SELECT 
-        block_id,
-        start_time AT TIME ZONE 'UTC' as start_time,
-        end_time AT TIME ZONE 'UTC' as end_time,
-        amount,
-        status,
-        date,
-        device_local_time,
-        device_timezone_offset,
-        device_time_zone_name,
-        created_at
-      FROM blocks
-      WHERE location_id = $1 AND date = $2::date
-      ORDER BY start_time
+        b.block_id,
+        b.start_time AT TIME ZONE 'UTC' as start_time,
+        b.end_time AT TIME ZONE 'UTC' as end_time,
+        b.amount,
+        b.status,
+        b.date,
+        b.device_local_time,
+        b.device_timezone_offset,
+        b.device_time_zone_name,
+        b.manager_id,  -- ADD: Include manager_id
+        b.created_at,
+        m.first_name as manager_first_name,
+        m.last_name as manager_last_name
+      FROM blocks b
+      LEFT JOIN managers m ON b.manager_id = m.manager_id  -- ADD: Join with managers
+      WHERE b.location_id = $1 AND b.date = $2::date
+      ORDER BY b.start_time
     `;
 
     const result = await pool.query(query, [locationIdInt, date]);
     
-    // Ensure timestamps are returned as ISO strings
+    // Ensure timestamps are returned as ISO strings and include manager info
     const blocks = result.rows.map(block => ({
       ...block,
       start_time: block.start_time instanceof Date ? block.start_time.toISOString() : block.start_time,
-      end_time: block.end_time instanceof Date ? block.end_time.toISOString() : block.end_time
+      end_time: block.end_time instanceof Date ? block.end_time.toISOString() : block.end_time,
+      created_by: block.manager_id ? {
+        id: block.manager_id,
+        name: `${block.manager_first_name || ''} ${block.manager_last_name || ''}`.trim()
+      } : null
     }));
 
     res.json({ success: true, blocks });
@@ -437,6 +515,9 @@ app.get('/api/blocks', async (req, res) => {
     res.status(500).json({ success: false, message: 'Internal server error' });
   }
 });
+
+
+
 
 // ✅ Delete block if unclaimed
 app.delete('/api/blocks/:blockId', async (req, res) => {
