@@ -88,6 +88,7 @@ app.post('/api/verify-store', async (req, res) => {
 
 
 // ✅ New API for Store Schedule View- specific date and location (for calendar view)
+// ✅ New API for Store Schedule View- specific date and location (for calendar view)
 // Also update GET /api/location/blocks to include manager info
 app.get('/api/location/blocks', async (req, res) => {
   const { location_id, date } = req.query;
@@ -123,16 +124,17 @@ app.get('/api/location/blocks', async (req, res) => {
         d.last_name,
         d.phone_number,
         d.email,
-        d.license_number,
-        d.license_expiration,
-        d.registration_expiration_date,
-        i.start_date AS insurance_start,
-        i.end_date AS insurance_end,
+        d.driver_license_number,  -- CHANGED: from license_number
+        d.driver_license_expiration,  -- CHANGED: from license_expiration
+        cd.vehicle_registration_expiration,  -- CHANGED: moved from drivers table and renamed
+        i.policy_start_date AS insurance_start,  -- CHANGED: from i.start_date
+        i.policy_end_date AS insurance_end,  -- CHANGED: from i.end_date
         m.first_name as manager_first_name,  -- ADD: Manager info
         m.last_name as manager_last_name
       FROM blocks AS b
       LEFT JOIN latest_claims lc ON b.block_id = lc.block_id
       LEFT JOIN drivers d ON lc.driver_id = d.driver_id
+      LEFT JOIN car_details cd ON d.driver_id = cd.driver_id  -- ADD: Join with car_details
       LEFT JOIN insurance_details i ON d.driver_id = i.driver_id
       LEFT JOIN managers m ON b.manager_id = m.manager_id  -- ADD: Join with managers
       WHERE b.location_id = $1 AND b.date = $2::date
@@ -160,9 +162,9 @@ app.get('/api/location/blocks', async (req, res) => {
             fullName: `${row.first_name} ${row.last_name}`,
             phone: row.phone_number,
             email: row.email,
-            licenseNumber: row.license_number,
-            licenseValid: row.license_expiration > new Date(),
-            registrationValid: row.registration_expiration_date > new Date(),
+            licenseNumber: row.driver_license_number,
+            licenseValid: row.driver_license_expiration > new Date(),  // CHANGED: field name
+            registrationValid: row.vehicle_registration_expiration > new Date(),  // CHANGED: field name
             insuranceValid: row.insurance_end > new Date(),
           }
         : undefined,
@@ -248,13 +250,15 @@ app.get('/api/location/:locationId/blocks/:blockId', async (req, res) => {
         d.last_name,
         d.phone_number,
         d.email,
-        d.license_number,
-        d.license_expiration,
-        d.registration_expiration_date,
-        i.end_date AS insurance_end
+        d.driver_license_number,  -- CHANGED: from license_number
+        d.driver_license_expiration,  -- CHANGED: from license_expiration
+        cd.vehicle_registration_expiration,  -- CHANGED: moved from drivers table
+        i.policy_start_date AS insurance_start,  -- CHANGED: from start_date
+        i.policy_end_date AS insurance_end  -- CHANGED: from end_date
       FROM blocks b
       LEFT JOIN block_claims bc ON b.block_id = bc.block_id
       LEFT JOIN drivers d ON bc.driver_id = d.driver_id
+      LEFT JOIN car_details cd ON d.driver_id = cd.driver_id  -- ADD: Join car_details
       LEFT JOIN insurance_details i ON d.driver_id = i.driver_id
       WHERE b.block_id = $1 AND b.location_id = $2
       LIMIT 1
@@ -271,15 +275,15 @@ app.get('/api/location/:locationId/blocks/:blockId', async (req, res) => {
       fullName: `${row.first_name} ${row.last_name}`,
       phone: row.phone_number,
       email: row.email,
-      licenseNumber: row.license_number,
-      licenseValid: row.license_expiration > new Date(),
-      registrationValid: row.registration_expiration_date > new Date(),
+      licenseNumber: row.driver_license_number,  // CHANGED: field name
+      licenseValid: row.driver_license_expiration > new Date(),  // CHANGED: field name
+      registrationValid: row.vehicle_registration_expiration > new Date(),  // CHANGED: field name
       insuranceValid: row.insurance_end > new Date(),
     } : null;
 
     const block = {
       blockId: row.block_id,
-      date: row.formatted_date,
+      date: row.date?.toISOString().split('T')[0] || null,  // FIX: use row.date instead of row.formatted_date
       startTime: row.start_time,
       endTime: row.end_time,
       amount: row.amount,
