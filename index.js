@@ -599,3 +599,63 @@ const PORT = process.env.PORT || 5003;
 app.listen(PORT, () => {
   console.log('✅ Manager backend is up and running on port', PORT);
 });
+
+
+// Add this endpoint to your existing backend code
+
+// ✅ Remove store from manager (delete link)
+app.delete('/api/my-stores/:storeId', async (req, res) => {
+  const { storeId } = req.params;
+  const { managerId } = req.query;
+
+  if (!storeId || !managerId) {
+    return res.status(400).json({ 
+      success: false, 
+      message: 'Missing storeId or managerId' 
+    });
+  }
+
+  try {
+    // First check if the link exists
+    const checkQuery = `
+      SELECT msl.*, l.city 
+      FROM manager_store_links msl
+      JOIN locations l ON msl.store_id = l.store_id
+      WHERE msl.manager_id = $1 AND msl.store_id = $2
+    `;
+    const checkResult = await pool.query(checkQuery, [managerId, storeId]);
+
+    if (checkResult.rows.length === 0) {
+      return res.status(404).json({ 
+        success: false, 
+        message: 'Store not found for this manager' 
+      });
+    }
+
+    const storeInfo = checkResult.rows[0];
+
+    // Delete the link
+    const deleteQuery = `
+      DELETE FROM manager_store_links 
+      WHERE manager_id = $1 AND store_id = $2
+    `;
+    await pool.query(deleteQuery, [managerId, storeId]);
+
+    console.log(`✅ Store ${storeId} unlinked from manager ${managerId}`);
+
+    res.json({ 
+      success: true, 
+      message: `Store ${storeId} - ${storeInfo.city} removed successfully`,
+      removedStore: {
+        id: storeId,
+        city: storeInfo.city
+      }
+    });
+  } catch (err) {
+    console.error('❌ Error removing store link:', err);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Internal server error' 
+    });
+  }
+});
