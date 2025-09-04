@@ -734,8 +734,8 @@ app.delete('/api/blocks/:blockId', async (req, res) => {
 
 
 // Add this endpoint to serve driver photos from GCS
-app.get('/api/drivers/photo/:path(*)', async (req, res) => {
-  const { path } = req.params;
+app.get('/api/drivers/photo/*', async (req, res) => {
+  const path = req.params[0]; // This will contain everything after /api/drivers/photo/
   
   try {
     // If you're using Google Cloud Storage
