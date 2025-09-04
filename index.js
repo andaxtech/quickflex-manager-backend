@@ -103,9 +103,16 @@ app.get('/api/location/blocks', async (req, res) => {
       WITH latest_claims AS (
         SELECT *
         FROM (
-          SELECT claim_id, block_id, driver_id, claim_time,
-                 ROW_NUMBER() OVER (PARTITION BY block_id ORDER BY claim_time DESC) AS rn
-          FROM block_claims
+          SELECT 
+            bc.claim_id, 
+            bc.block_id, 
+            bc.driver_id, 
+            bc.claim_time,
+            bc.service_status,
+            bc.check_in_time,
+            bc.check_out_time,
+            ROW_NUMBER() OVER (PARTITION BY bc.block_id ORDER BY bc.claim_time DESC) AS rn
+          FROM block_claims bc
         ) sub
         WHERE rn = 1
       )
@@ -115,28 +122,40 @@ app.get('/api/location/blocks', async (req, res) => {
         b.start_time,
         b.end_time,
         b.amount,
-        b.status,
-        b.manager_id,  -- ADD: Include manager_id
+        b.status as block_status,
+        b.manager_id,
         lc.claim_time,
         lc.claim_id,
+        lc.service_status,
+        lc.check_in_time,
+        lc.check_out_time,
         d.driver_id,
         d.first_name,
         d.last_name,
         d.phone_number,
         d.email,
-        d.driver_license_number,  -- CHANGED: from license_number
-        d.driver_license_expiration,  -- CHANGED: from license_expiration
-        cd.vehicle_registration_expiration,  -- CHANGED: moved from drivers table and renamed
-        i.policy_start_date AS insurance_start,  -- CHANGED: from i.start_date
-        i.policy_end_date AS insurance_end,  -- CHANGED: from i.end_date
-        m.first_name as manager_first_name,  -- ADD: Manager info
-        m.last_name as manager_last_name
+        d.driver_license_number,
+        d.driver_license_expiration,
+        cd.vehicle_registration_expiration,
+        i.policy_start_date AS insurance_start,
+        i.policy_end_date AS insurance_end,
+        m.first_name as manager_first_name,
+        m.last_name as manager_last_name,
+        -- Determine display status based on your business logic
+        CASE 
+          WHEN lc.service_status = 'complete' THEN 'completed'
+          WHEN lc.service_status = 'in_progress' THEN 'in_progress'
+          WHEN b.status = 'accepted' THEN 'accepted'
+          WHEN b.status = 'expired' THEN 'expired'
+          WHEN b.status = 'available' THEN 'available'
+          ELSE b.status
+        END AS display_status
       FROM blocks AS b
       LEFT JOIN latest_claims lc ON b.block_id = lc.block_id
       LEFT JOIN drivers d ON lc.driver_id = d.driver_id
-      LEFT JOIN car_details cd ON d.driver_id = cd.driver_id  -- ADD: Join with car_details
+      LEFT JOIN car_details cd ON d.driver_id = cd.driver_id
       LEFT JOIN insurance_details i ON d.driver_id = i.driver_id
-      LEFT JOIN managers m ON b.manager_id = m.manager_id  -- ADD: Join with managers
+      LEFT JOIN managers m ON b.manager_id = m.manager_id
       WHERE b.location_id = $1 AND b.date = $2::date
       ORDER BY b.start_time
     `;
@@ -149,11 +168,13 @@ app.get('/api/location/blocks', async (req, res) => {
       startTime: row.start_time?.toISOString() || null,
       endTime: row.end_time?.toISOString() || null,
       amount: row.amount,
-      status: row.status,
+      status: row.display_status,  // Use the calculated display_status
+      blockStatus: row.block_status,  // Original block status if needed
+      serviceStatus: row.service_status,  // Service status from claims if needed
       claimTime: row.claim_time,
       claimId: row.claim_id,
-      managerId: row.manager_id,  // ADD: Include manager_id
-      createdBy: row.manager_id ? {  // ADD: Manager who created the block
+      managerId: row.manager_id,
+      createdBy: row.manager_id ? {
         id: row.manager_id,
         name: `${row.manager_first_name || ''} ${row.manager_last_name || ''}`.trim()
       } : null,
@@ -163,8 +184,8 @@ app.get('/api/location/blocks', async (req, res) => {
             phone: row.phone_number,
             email: row.email,
             licenseNumber: row.driver_license_number,
-            licenseValid: row.driver_license_expiration > new Date(),  // CHANGED: field name
-            registrationValid: row.vehicle_registration_expiration > new Date(),  // CHANGED: field name
+            licenseValid: row.driver_license_expiration > new Date(),
+            registrationValid: row.vehicle_registration_expiration > new Date(),
             insuranceValid: row.insurance_end > new Date(),
           }
         : undefined,
