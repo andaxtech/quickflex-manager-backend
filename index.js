@@ -418,7 +418,49 @@ app.get('/api/location/:locationId/blocks/:blockId', async (req, res) => {
   }
 });
 
+// ✅ Get driver location for a claimed block
+app.get('/api/drivers/:claimId/location', async (req, res) => {
+  const { claimId } = req.params;
 
+  if (!claimId) {
+    return res.status(400).json({ success: false, message: 'Missing claimId' });
+  }
+
+  try {
+    // First, verify the claim exists and get driver info
+    const claimQuery = `
+      SELECT 
+        bc.driver_id,
+        bc.block_id,
+        bc.service_status,
+        d.first_name,
+        d.last_name
+      FROM block_claims bc
+      JOIN drivers d ON bc.driver_id = d.driver_id
+      WHERE bc.claim_id = $1
+    `;
+
+    const claimResult = await pool.query(claimQuery, [claimId]);
+
+    if (claimResult.rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'Claim not found' });
+    }
+
+    const claim = claimResult.rows[0];
+
+    // For now, return mock data since you don't have a driver_locations table
+    // In production, you would query the actual location from your tracking system
+    res.json({
+      success: true,
+      location: null, // No location data available yet
+      message: 'Driver location tracking not yet implemented'
+    });
+
+  } catch (err) {
+    console.error('❌ Error fetching driver location:', err);
+    res.status(500).json({ success: false, message: 'Internal server error' });
+  }
+});
 
 // Updated create block API in manager backend
 // Replace the existing /api/blocks POST endpoint with this version
