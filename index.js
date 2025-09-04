@@ -248,7 +248,104 @@ app.get('/api/location/:locationId/store', async (req, res) => {
 
 
 
-// ✅ Get specific block detail + driver info
+// ✅ Get specific block detail + driver info (UPDATED FOR EXTENDED DETAILS)
+app.get('/api/location/:locationId/blocks/:blockId/details', async (req, res) => {
+  const { locationId, blockId } = req.params;
+
+  if (!locationId || !blockId) {
+    return res.status(400).json({ success: false, message: 'Missing locationId or blockId' });
+  }
+
+  try {
+    const query = `
+      SELECT 
+        b.block_id,
+        b.date,
+        b.start_time,
+        b.end_time,
+        b.amount,
+        b.status,
+        bc.claim_time,
+        bc.claim_id,
+        bc.service_status,
+        bc.check_in_time,
+        bc.check_out_time,
+        d.driver_id,
+        d.first_name,
+        d.last_name,
+        d.phone_number,
+        d.email,
+        d.driver_license_number,
+        d.driver_license_expiration,
+        cd.vehicle_registration_expiration,
+        cd.car_make,
+        cd.car_model,
+        cd.car_color,
+        cd.license_plate,
+        i.policy_start_date AS insurance_start,
+        i.policy_end_date AS insurance_end
+      FROM blocks b
+      LEFT JOIN block_claims bc ON b.block_id = bc.block_id
+      LEFT JOIN drivers d ON bc.driver_id = d.driver_id
+      LEFT JOIN car_details cd ON d.driver_id = cd.driver_id
+      LEFT JOIN insurance_details i ON d.driver_id = i.driver_id
+      WHERE b.block_id = $1 AND b.location_id = $2
+      ORDER BY bc.claim_time DESC
+      LIMIT 1
+    `;
+
+    const result = await pool.query(query, [blockId, locationId]);
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'Block not found' });
+    }
+
+    const row = result.rows[0];
+    
+    const block = {
+      blockId: row.block_id,
+      date: row.date?.toISOString().split('T')[0] || null,
+      startTime: row.start_time,
+      endTime: row.end_time,
+      amount: row.amount,
+      status: row.status,
+      claimTime: row.claim_time,
+      claimId: row.claim_id,
+      driver: row.first_name ? {
+        driverId: row.driver_id,
+        fullName: `${row.first_name} ${row.last_name}`,
+        firstName: row.first_name,
+        lastName: row.last_name,
+        phone: row.phone_number,
+        email: row.email,
+        licenseNumber: row.driver_license_number,
+        driverLicenseNumber: row.driver_license_number,
+        driverLicenseExpiration: row.driver_license_expiration,
+        licenseValid: row.driver_license_expiration > new Date(),
+        registrationValid: row.vehicle_registration_expiration > new Date(),
+        insuranceValid: row.insurance_end > new Date(),
+      } : null,
+      carDetails: row.car_make ? {
+        carMake: row.car_make,
+        carModel: row.car_model,
+        carColor: row.car_color,
+        licensePlate: row.license_plate
+      } : null,
+      blockClaim: row.claim_id ? {
+        checkInTime: row.check_in_time,
+        checkOutTime: row.check_out_time,
+        serviceStatus: row.service_status
+      } : null
+    };
+
+    res.json({ success: true, block });
+  } catch (err) {
+    console.error('❌ Error fetching block details:', err);
+    res.status(500).json({ success: false, message: 'Internal server error' });
+  }
+});
+
+// Keep the original endpoint for backward compatibility
 app.get('/api/location/:locationId/blocks/:blockId', async (req, res) => {
   const { locationId, blockId } = req.params;
 
@@ -271,15 +368,15 @@ app.get('/api/location/:locationId/blocks/:blockId', async (req, res) => {
         d.last_name,
         d.phone_number,
         d.email,
-        d.driver_license_number,  -- CHANGED: from license_number
-        d.driver_license_expiration,  -- CHANGED: from license_expiration
-        cd.vehicle_registration_expiration,  -- CHANGED: moved from drivers table
-        i.policy_start_date AS insurance_start,  -- CHANGED: from start_date
-        i.policy_end_date AS insurance_end  -- CHANGED: from end_date
+        d.driver_license_number,
+        d.driver_license_expiration,
+        cd.vehicle_registration_expiration,
+        i.policy_start_date AS insurance_start,
+        i.policy_end_date AS insurance_end
       FROM blocks b
       LEFT JOIN block_claims bc ON b.block_id = bc.block_id
       LEFT JOIN drivers d ON bc.driver_id = d.driver_id
-      LEFT JOIN car_details cd ON d.driver_id = cd.driver_id  -- ADD: Join car_details
+      LEFT JOIN car_details cd ON d.driver_id = cd.driver_id
       LEFT JOIN insurance_details i ON d.driver_id = i.driver_id
       WHERE b.block_id = $1 AND b.location_id = $2
       LIMIT 1
@@ -296,15 +393,15 @@ app.get('/api/location/:locationId/blocks/:blockId', async (req, res) => {
       fullName: `${row.first_name} ${row.last_name}`,
       phone: row.phone_number,
       email: row.email,
-      licenseNumber: row.driver_license_number,  // CHANGED: field name
-      licenseValid: row.driver_license_expiration > new Date(),  // CHANGED: field name
-      registrationValid: row.vehicle_registration_expiration > new Date(),  // CHANGED: field name
+      licenseNumber: row.driver_license_number,
+      licenseValid: row.driver_license_expiration > new Date(),
+      registrationValid: row.vehicle_registration_expiration > new Date(),
       insuranceValid: row.insurance_end > new Date(),
     } : null;
 
     const block = {
       blockId: row.block_id,
-      date: row.date?.toISOString().split('T')[0] || null,  // FIX: use row.date instead of row.formatted_date
+      date: row.date?.toISOString().split('T')[0] || null,
       startTime: row.start_time,
       endTime: row.end_time,
       amount: row.amount,
