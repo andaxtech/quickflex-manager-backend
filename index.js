@@ -734,8 +734,35 @@ app.delete('/api/blocks/:blockId', async (req, res) => {
 
 
 // Add this endpoint to serve driver photos from GCS
-app.get('/api/drivers/photo/*', async (req, res) => {
+app.get(/^\/api\/drivers\/photo\/(.*)/, async (req, res) => {
   const path = req.params[0]; // This will contain everything after /api/drivers/photo/
+  
+  try {
+    // If you're using Google Cloud Storage
+    const { Storage } = require('@google-cloud/storage');
+    const storage = new Storage();
+    const bucket = storage.bucket('your-bucket-name'); // Replace with your bucket
+    const file = bucket.file(path);
+    
+    const [exists] = await file.exists();
+    if (!exists) {
+      return res.status(404).send('Photo not found');
+    }
+    
+    // Stream the file
+    res.setHeader('Content-Type', 'image/jpeg');
+    file.createReadStream()
+      .on('error', (err) => {
+        console.error('Error streaming file:', err);
+        res.status(500).send('Error loading photo');
+      })
+      .pipe(res);
+      
+  } catch (error) {
+    console.error('Error serving photo:', error);
+    res.status(500).send('Error loading photo');
+  }
+});
   
   try {
     // If you're using Google Cloud Storage
