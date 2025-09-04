@@ -1,4 +1,5 @@
 const express = require('express');
+const { Storage } = require('@google-cloud/storage');
 const cors = require('cors');
 const { Pool } = require('pg');
 require('dotenv').config();
@@ -733,34 +734,65 @@ app.delete('/api/blocks/:blockId', async (req, res) => {
 });
 
 
-// Add this endpoint to serve driver photos from GCS
+// Initialize GCS at the top of the file (after requires, before app routes)
+const { Storage } = require('@google-cloud/storage');
+
+let storage;
+if (process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON) {
+  try {
+    const credentials = JSON.parse(process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON);
+    storage = new Storage({
+      projectId: process.env.GCS_PROJECT_ID,
+      credentials: credentials
+    });
+    console.log('✅ GCS initialized with credentials');
+  } catch (error) {
+    console.error('❌ Failed to parse GCS credentials:', error);
+    storage = new Storage();
+  }
+} else {
+  storage = new Storage();
+}
+
+const bucketName = process.env.GCS_BUCKET_NAME;
+
+// Serve driver photos from GCS
 app.get(/^\/api\/drivers\/photo\/(.*)/, async (req, res) => {
-  const path = req.params[0]; // This will contain everything after /api/drivers/photo/
+  const gcsPath = req.params[0];
   
   try {
-    // If you're using Google Cloud Storage
-    const { Storage } = require('@google-cloud/storage');
-    const storage = new Storage();
-    const bucket = storage.bucket('your-bucket-name'); // Replace with your bucket
-    const file = bucket.file(path);
+    if (!bucketName) {
+      console.error('GCS_BUCKET_NAME not configured');
+      return res.status(500).json({ error: 'Storage configuration missing' });
+    }
+
+    const file = storage.bucket(bucketName).file(gcsPath);
     
     const [exists] = await file.exists();
     if (!exists) {
-      return res.status(404).send('Photo not found');
+      console.log(`Photo not found in GCS: ${gcsPath}`);
+      return res.status(404).json({ error: 'Photo not found' });
     }
     
+    // Get file metadata to set correct content type
+    const [metadata] = await file.getMetadata();
+    
+    res.setHeader('Content-Type', metadata.contentType || 'image/jpeg');
+    res.setHeader('Cache-Control', 'public, max-age=3600');
+    
     // Stream the file
-    res.setHeader('Content-Type', 'image/jpeg');
     file.createReadStream()
       .on('error', (err) => {
-        console.error('Error streaming file:', err);
-        res.status(500).send('Error loading photo');
+        console.error('Error streaming GCS file:', err);
+        if (!res.headersSent) {
+          res.status(500).json({ error: 'Failed to load photo' });
+        }
       })
       .pipe(res);
       
   } catch (error) {
-    console.error('Error serving photo:', error);
-    res.status(500).send('Error loading photo');
+    console.error('Error serving GCS photo:', error);
+    res.status(500).json({ error: 'Failed to load photo' });
   }
 });
 
