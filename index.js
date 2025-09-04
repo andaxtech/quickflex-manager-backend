@@ -735,7 +735,6 @@ app.delete('/api/blocks/:blockId', async (req, res) => {
 
 
 // Initialize GCS at the top of the file (after requires, before app routes)
-const { Storage } = require('@google-cloud/storage');
 
 let storage;
 if (process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON) {
