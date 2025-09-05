@@ -266,6 +266,7 @@ app.get('/api/location/:locationId/blocks/:blockId/details', async (req, res) =>
         b.end_time,
         b.amount,
         b.status,
+        b.manager_id,
         bc.claim_time,
         bc.claim_id,
         bc.service_status,
@@ -313,6 +314,7 @@ app.get('/api/location/:locationId/blocks/:blockId/details', async (req, res) =>
       endTime: row.end_time,
       amount: row.amount,
       status: row.status,
+      manager_id: row.manager_id,
       claimTime: row.claim_time,
       claimId: row.claim_id,
       timeZoneCode: row.time_zone_code || 'GMT-08:00', // Default to PST if missing
