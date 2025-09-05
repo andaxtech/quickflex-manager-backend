@@ -285,8 +285,10 @@ app.get('/api/location/:locationId/blocks/:blockId/details', async (req, res) =>
         cd.car_color,
         cd.license_plate,
         i.policy_start_date AS insurance_start,
-        i.policy_end_date AS insurance_end
+        i.policy_end_date AS insurance_end,
+        l.time_zone_code
       FROM blocks b
+      LEFT JOIN locations l ON b.location_id = l.location_id
       LEFT JOIN block_claims bc ON b.block_id = bc.block_id
       LEFT JOIN drivers d ON bc.driver_id = d.driver_id
       LEFT JOIN car_details cd ON d.driver_id = cd.driver_id
@@ -313,6 +315,7 @@ app.get('/api/location/:locationId/blocks/:blockId/details', async (req, res) =>
       status: row.status,
       claimTime: row.claim_time,
       claimId: row.claim_id,
+      timeZoneCode: row.time_zone_code,
       driver: row.first_name ? {
         driverId: row.driver_id,
         fullName: `${row.first_name} ${row.last_name}`,
