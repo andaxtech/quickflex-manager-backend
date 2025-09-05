@@ -315,7 +315,7 @@ app.get('/api/location/:locationId/blocks/:blockId/details', async (req, res) =>
       status: row.status,
       claimTime: row.claim_time,
       claimId: row.claim_id,
-      timeZoneCode: row.time_zone_code,
+      timeZoneCode: row.time_zone_code || 'GMT-08:00', // Default to PST if missing
       driver: row.first_name ? {
         driverId: row.driver_id,
         fullName: `${row.first_name} ${row.last_name}`,
