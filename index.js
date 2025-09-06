@@ -887,4 +887,126 @@ app.delete('/api/my-stores/:storeId', async (req, res) => {
       message: 'Internal server error' 
     });
   }
+  // Add to your existing backend
+app.post('/api/managers/signup', async (req, res) => {
+  const { 
+    clerk_user_id, 
+    first_name, 
+    last_name, 
+    email, 
+    phone_number, 
+    restaurant_name, 
+    restaurant_address 
+  } = req.body;
+
+  if (!clerk_user_id || !first_name || !last_name || !email || !phone_number) {
+    return res.status(400).json({ 
+      success: false, 
+      message: 'Missing required fields' 
+    });
+  }
+
+  const client = await pool.connect();
+
+  try {
+    await client.query('BEGIN');
+
+    // Check if manager already exists
+    const existingCheck = await client.query(
+      'SELECT manager_id FROM managers WHERE clerk_user_id = $1',
+      [clerk_user_id]
+    );
+
+    if (existingCheck.rows.length > 0) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ 
+        success: false, 
+        message: 'Manager already exists' 
+      });
+    }
+
+    // Insert new manager
+    const insertQuery = `
+      INSERT INTO managers (
+        clerk_user_id,
+        first_name,
+        last_name,
+        email,
+        phone_number,
+        restaurant_name,
+        restaurant_address,
+        status,
+        created_at
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, 'active', NOW())
+      RETURNING manager_id
+    `;
+
+    const result = await client.query(insertQuery, [
+      clerk_user_id,
+      first_name,
+      last_name,
+      email,
+      phone_number,
+      restaurant_name,
+      restaurant_address
+    ]);
+
+    await client.query('COMMIT');
+
+    res.status(201).json({
+      success: true,
+      manager_id: result.rows[0].manager_id,
+      message: 'Manager account created successfully'
+    });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error('Manager signup error:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Failed to create manager account' 
+    });
+  } finally {
+    client.release();
+  }
+});
+
+// Get manager by Clerk ID
+app.get('/api/managers/clerk/:clerkUserId', async (req, res) => {
+  const { clerkUserId } = req.params;
+
+  try {
+    const query = `
+      SELECT 
+        manager_id,
+        first_name,
+        last_name,
+        email,
+        phone_number,
+        restaurant_name,
+        status
+      FROM managers 
+      WHERE clerk_user_id = $1
+    `;
+
+    const result = await pool.query(query, [clerkUserId]);
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ 
+        success: false, 
+        message: 'Manager not found' 
+      });
+    }
+
+    res.json({
+      success: true,
+      ...result.rows[0]
+    });
+  } catch (error) {
+    console.error('Error fetching manager:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Failed to fetch manager' 
+    });
+  }
+});
 });
