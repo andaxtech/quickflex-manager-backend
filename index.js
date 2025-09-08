@@ -887,6 +887,89 @@ app.delete('/api/my-stores/:storeId', async (req, res) => {
       message: 'Internal server error' 
     });
   }
+
+
+// Manager login with Clerk
+app.post('/api/managers/clerk-login', async (req, res) => {
+  const { clerkUserId } = req.body;
+
+  if (!clerkUserId) {
+    return res.status(400).json({ 
+      success: false, 
+      message: 'Missing Clerk user ID' 
+    });
+  }
+
+  try {
+    // First check users table
+    const userQuery = `
+      SELECT u.user_id, u.email, u.role, u.status
+      FROM users u
+      WHERE u.clerk_user_id = $1
+    `;
+    const userResult = await pool.query(userQuery, [clerkUserId]);
+
+    if (userResult.rows.length === 0) {
+      return res.status(404).json({ 
+        success: false, 
+        message: 'User not found',
+        needsSignup: true 
+      });
+    }
+
+    const user = userResult.rows[0];
+
+    // Then get manager details
+    const managerQuery = `
+      SELECT m.manager_id, m.first_name, m.last_name, m.phone_number, m.status
+      FROM managers m
+      WHERE m.user_id = $1
+    `;
+    const managerResult = await pool.query(managerQuery, [user.user_id]);
+
+    if (managerResult.rows.length === 0) {
+      return res.status(404).json({ 
+        success: false, 
+        message: 'Manager profile not found',
+        needsManagerProfile: true,
+        userId: user.user_id
+      });
+    }
+
+    const manager = managerResult.rows[0];
+
+    if (manager.status !== 'active') {
+      return res.status(403).json({ 
+        success: false, 
+        message: 'Manager account is not active' 
+      });
+    }
+
+    res.json({
+      success: true,
+      managerId: manager.manager_id,
+      manager: {
+        id: manager.manager_id,
+        firstName: manager.first_name,
+        lastName: manager.last_name,
+        email: user.email,
+        phone: manager.phone_number
+      }
+    });
+  } catch (error) {
+    console.error('Manager Clerk login error:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Login failed' 
+    });
+  }
+});
+
+
+
+
+
+
   // Add to your existing backend
 app.post('/api/managers/signup', async (req, res) => {
   const { 
