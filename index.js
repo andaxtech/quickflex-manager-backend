@@ -877,10 +877,12 @@ app.post('/api/managers/clerk-login', async (req, res) => {
     const userResult = await pool.query(userQuery, [clerkUserId]);
 
     if (userResult.rows.length === 0) {
+      // Check if this Clerk user exists at all (they might have verified but not completed signup)
       return res.status(404).json({ 
         success: false, 
         message: 'User not found',
-        needsSignup: true 
+        needsSignup: true,
+        isVerifiedButIncomplete: true
       });
     }
 
