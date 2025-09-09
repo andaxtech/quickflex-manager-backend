@@ -42,7 +42,7 @@ app.post('/api/verify-store', async (req, res) => {
     if (checkResult.rows.length === 0) {
       return res.status(401).json({
         success: false,
-        message: 'FCODE PIN and Store ID don't match.',
+        message: 'FCODE PIN and Store ID do not match.'
       });
     }
 
