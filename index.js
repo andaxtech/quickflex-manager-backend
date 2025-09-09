@@ -42,7 +42,7 @@ app.post('/api/verify-store', async (req, res) => {
     if (checkResult.rows.length === 0) {
       return res.status(401).json({
         success: false,
-        message: 'FCODE PIN and Store ID don’t match.',
+        message: 'FCODE PIN and Store ID don't match.',
       });
     }
 
@@ -85,10 +85,6 @@ app.post('/api/verify-store', async (req, res) => {
   }
 });
 
-
-
-
-// ✅ New API for Store Schedule View- specific date and location (for calendar view)
 // ✅ New API for Store Schedule View- specific date and location (for calendar view)
 // Also update GET /api/location/blocks to include manager info
 app.get('/api/location/blocks', async (req, res) => {
@@ -199,10 +195,6 @@ app.get('/api/location/blocks', async (req, res) => {
   }
 });
 
-
-
-
-
 // ✅ Get store details by locationId- new version- Modal.tsx
 app.get('/api/location/:locationId/store', async (req, res) => {
   const { locationId } = req.params;
@@ -244,10 +236,6 @@ app.get('/api/location/:locationId/store', async (req, res) => {
     res.status(500).json({ success: false, message: 'Internal server error' });
   }
 });
-
-
-
-
 
 // ✅ Get specific block detail + driver info (UPDATED FOR EXTENDED DETAILS)
 app.get('/api/location/:locationId/blocks/:blockId/details', async (req, res) => {
@@ -470,12 +458,7 @@ app.get('/api/drivers/:claimId/location', async (req, res) => {
   }
 });
 
-// Updated create block API in manager backend
-// Replace the existing /api/blocks POST endpoint with this version
-
 // Fixed create block API in manager backend
-// This should replace your existing /api/blocks POST endpoint
-
 app.post('/api/blocks', async (req, res) => {
   const { 
     location_id, 
@@ -637,9 +620,6 @@ app.post('/api/blocks', async (req, res) => {
   }
 });
 
-
-
-
 // Also update the GET /api/blocks to include manager info
 app.get('/api/blocks', async (req, res) => {
   const { location_id, date } = req.query;
@@ -691,9 +671,6 @@ app.get('/api/blocks', async (req, res) => {
   }
 });
 
-
-
-
 // ✅ Delete block if unclaimed
 app.delete('/api/blocks/:blockId', async (req, res) => {
   const { blockId } = req.params;
@@ -738,9 +715,7 @@ app.delete('/api/blocks/:blockId', async (req, res) => {
   }
 });
 
-
-// Initialize GCS at the top of the file (after requires, before app routes)
-
+// Initialize GCS
 let storage;
 if (process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON) {
   try {
@@ -824,14 +799,6 @@ app.get('/api/my-stores', async (req, res) => {
   }
 });
 
-const PORT = process.env.PORT || 5003;
-app.listen(PORT, () => {
-  console.log('✅ Manager backend is up and running on port', PORT);
-});
-
-
-// Add this endpoint to your existing backend code
-
 // ✅ Remove store from manager (delete link)
 app.delete('/api/my-stores/:storeId', async (req, res) => {
   const { storeId } = req.params;
@@ -887,7 +854,7 @@ app.delete('/api/my-stores/:storeId', async (req, res) => {
       message: 'Internal server error' 
     });
   }
-
+});
 
 // Manager login with Clerk
 app.post('/api/managers/clerk-login', async (req, res) => {
@@ -965,24 +932,17 @@ app.post('/api/managers/clerk-login', async (req, res) => {
   }
 });
 
-
-
-
-
-
-  // Add to your existing backend
+// Add to your existing backend
 app.post('/api/managers/signup', async (req, res) => {
   const { 
     clerk_user_id, 
     first_name, 
     last_name, 
     email, 
-    phone_number, 
-    restaurant_name, 
-    restaurant_address 
+    phone_number
   } = req.body;
 
-  if (!clerk_user_id || !first_name || !last_name || !email || !phone_number) {
+  if (!clerk_user_id || !first_name || !last_name || !phone_number) {
     return res.status(400).json({ 
       success: false, 
       message: 'Missing required fields' 
@@ -994,13 +954,39 @@ app.post('/api/managers/signup', async (req, res) => {
   try {
     await client.query('BEGIN');
 
-    // Check if manager already exists
-    const existingCheck = await client.query(
-      'SELECT manager_id FROM managers WHERE clerk_user_id = $1',
+    // First, create or get user record
+    let userId;
+    const userCheck = await client.query(
+      'SELECT user_id FROM users WHERE clerk_user_id = $1',
       [clerk_user_id]
     );
 
-    if (existingCheck.rows.length > 0) {
+    if (userCheck.rows.length > 0) {
+      userId = userCheck.rows[0].user_id;
+    } else {
+      // Create user first
+      const userResult = await client.query(
+        `INSERT INTO users (
+          clerk_user_id,
+          email,
+          role,
+          status,
+          is_verified,
+          created_at
+        ) VALUES ($1, $2, 'manager', 'active', true, NOW())
+        RETURNING user_id`,
+        [clerk_user_id, email || `${phone_number}@quickflex.com`]
+      );
+      userId = userResult.rows[0].user_id;
+    }
+
+    // Check if manager already exists for this user
+    const managerCheck = await client.query(
+      'SELECT manager_id FROM managers WHERE user_id = $1',
+      [userId]
+    );
+
+    if (managerCheck.rows.length > 0) {
       await client.query('ROLLBACK');
       return res.status(409).json({ 
         success: false, 
@@ -1011,27 +997,21 @@ app.post('/api/managers/signup', async (req, res) => {
     // Insert new manager
     const insertQuery = `
       INSERT INTO managers (
-        clerk_user_id,
+        user_id,
         first_name,
         last_name,
-        email,
         phone_number,
-        restaurant_name,
-        restaurant_address,
         status,
         created_at
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, 'active', NOW())
+      ) VALUES ($1, $2, $3, $4, 'active', NOW())
       RETURNING manager_id
     `;
 
     const result = await client.query(insertQuery, [
-      clerk_user_id,
+      userId,
       first_name,
       last_name,
-      email,
-      phone_number,
-      restaurant_name,
-      restaurant_address
+      phone_number
     ]);
 
     await client.query('COMMIT');
@@ -1060,15 +1040,15 @@ app.get('/api/managers/clerk/:clerkUserId', async (req, res) => {
   try {
     const query = `
       SELECT 
-        manager_id,
-        first_name,
-        last_name,
-        email,
-        phone_number,
-        restaurant_name,
-        status
-      FROM managers 
-      WHERE clerk_user_id = $1
+        m.manager_id,
+        m.first_name,
+        m.last_name,
+        u.email,
+        m.phone_number,
+        m.status
+      FROM managers m
+      JOIN users u ON m.user_id = u.user_id
+      WHERE u.clerk_user_id = $1
     `;
 
     const result = await pool.query(query, [clerkUserId]);
@@ -1092,4 +1072,34 @@ app.get('/api/managers/clerk/:clerkUserId', async (req, res) => {
     });
   }
 });
+
+// Manager phone signup (simplified for phone auth)
+app.post('/api/managers/phone-signup', async (req, res) => {
+  const { 
+    clerk_user_id,
+    phone_number,
+    first_name,
+    last_name,
+    email
+  } = req.body;
+
+  if (!clerk_user_id || !phone_number) {
+    return res.status(400).json({ 
+      success: false, 
+      message: 'Missing required fields' 
+    });
+  }
+
+  // Reuse the existing signup logic
+  req.body.email = email || `${phone_number}@quickflex.com`;
+  req.body.first_name = first_name || 'Manager';
+  req.body.last_name = last_name || 'User';
+  
+  // Call the signup endpoint logic
+  return app._router.handle(req, res);
+});
+
+const PORT = process.env.PORT || 5003;
+app.listen(PORT, () => {
+  console.log('✅ Manager backend is up and running on port', PORT);
 });
