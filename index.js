@@ -996,23 +996,26 @@ app.post('/api/managers/signup', async (req, res) => {
 
     // Insert new manager
     const insertQuery = `
-      INSERT INTO managers (
-        user_id,
-        first_name,
-        last_name,
-        phone_number,
-        status,
-        created_at
-      ) VALUES ($1, $2, $3, $4, 'active', NOW())
-      RETURNING manager_id
-    `;
+  INSERT INTO managers (
+    user_id,
+    first_name,
+    last_name,
+    phone_number,
+    fleet,
+    status,
+    created_at,
+    updated_at
+  ) VALUES ($1, $2, $3, $4, $5, 'active', NOW(), NOW())
+  RETURNING manager_id
+`;
 
-    const result = await client.query(insertQuery, [
-      userId,
-      first_name,
-      last_name,
-      phone_number
-    ]);
+const result = await client.query(insertQuery, [
+  userId,
+  first_name,
+  last_name,
+  phone_number,
+  role || null
+]);
 
     await client.query('COMMIT');
 
