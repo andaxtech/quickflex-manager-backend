@@ -1090,13 +1090,21 @@ app.post('/api/managers/phone-signup', async (req, res) => {
     });
   }
 
-  // Reuse the existing signup logic
-  req.body.email = email || `${phone_number}@quickflex.com`;
-  req.body.first_name = first_name || 'Manager';
-  req.body.last_name = last_name || 'User';
-  
-  // Call the signup endpoint logic
-  return app._router.handle(req, res);
+  // Forward to the main signup endpoint with modified data
+  const modifiedReq = {
+    body: {
+      clerk_user_id,
+      phone_number,
+      first_name: first_name || 'Manager',
+      last_name: last_name || 'User',
+      email: email || `${phone_number}@quickflex.com`
+    }
+  };
+
+  // Call the existing signup logic
+  return app._router.stack
+    .find(layer => layer.route?.path === '/api/managers/signup')
+    ?.route.stack[0].handle(modifiedReq, res);
 });
 
 const PORT = process.env.PORT || 5003;
