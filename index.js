@@ -971,13 +971,18 @@ app.post('/api/managers/signup', async (req, res) => {
         `INSERT INTO users (
           clerk_user_id,
           email,
+          username,
           role,
           status,
           is_verified,
           created_at
-        ) VALUES ($1, $2, 'manager', 'active', true, NOW())
+        ) VALUES ($1, $2, $3, 'manager', 'active', true, NOW())
         RETURNING user_id`,
-        [clerk_user_id, email || `${phone_number}@quickflex.com`]
+        [
+          clerk_user_id, 
+          email || `${phone_number}@quickflex.com`,
+          email ? email.split('@')[0] : `user_${phone_number.slice(-4)}` // Generate username
+        ]
       );
       userId = userResult.rows[0].user_id;
     }
