@@ -1076,6 +1076,162 @@ app.get('/api/managers/clerk/:clerkUserId', async (req, res) => {
   }
 });
 
+// Update manager profile
+app.put('/api/managers/:managerId', async (req, res) => {
+  const { managerId } = req.params;
+  const { 
+    first_name, 
+    last_name, 
+    phone_number, 
+    fleet,
+    default_store_id,
+    manager_profile_url
+  } = req.body;
+
+  if (!managerId) {
+    return res.status(400).json({ 
+      success: false, 
+      message: 'Missing managerId' 
+    });
+  }
+
+  try {
+    const updateQuery = `
+      UPDATE managers 
+      SET 
+        first_name = COALESCE($2, first_name),
+        last_name = COALESCE($3, last_name),
+        phone_number = COALESCE($4, phone_number),
+        fleet = COALESCE($5, fleet),
+        default_store_id = COALESCE($6, default_store_id),
+        manager_profile_url = COALESCE($7, manager_profile_url),
+        updated_at = NOW()
+      WHERE manager_id = $1
+      RETURNING manager_id, first_name, last_name, phone_number, fleet, default_store_id
+    `;
+
+    const result = await pool.query(updateQuery, [
+      managerId,
+      first_name,
+      last_name,
+      phone_number,
+      fleet,
+      default_store_id,
+      manager_profile_url
+    ]);
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ 
+        success: false, 
+        message: 'Manager not found' 
+      });
+    }
+
+    res.json({
+      success: true,
+      manager: result.rows[0],
+      message: 'Profile updated successfully'
+    });
+  } catch (error) {
+    console.error('Update manager error:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Failed to update manager profile' 
+    });
+  }
+});
+
+// Get manager statistics
+app.get('/api/managers/:managerId/stats', async (req, res) => {
+  const { managerId } = req.params;
+  const { startDate, endDate } = req.query;
+
+  if (!managerId) {
+    return res.status(400).json({ 
+      success: false, 
+      message: 'Missing managerId' 
+    });
+  }
+
+  try {
+    // Get store count
+    const storeCountQuery = `
+      SELECT COUNT(DISTINCT store_id) as store_count 
+      FROM manager_store_links 
+      WHERE manager_id = $1
+    `;
+    const storeCountResult = await pool.query(storeCountQuery, [managerId]);
+
+    // Build block statistics query with optional date filters
+    let blockStatsQuery = `
+      SELECT 
+        COUNT(*) as total_blocks,
+        COUNT(CASE WHEN b.status = 'accepted' THEN 1 END) as accepted_blocks,
+        COUNT(CASE WHEN b.status = 'available' THEN 1 END) as available_blocks,
+        COUNT(CASE WHEN b.status = 'expired' THEN 1 END) as expired_blocks,
+        COUNT(CASE WHEN bc.service_status = 'complete' THEN 1 END) as completed_blocks,
+        COUNT(CASE WHEN bc.service_status = 'in_progress' THEN 1 END) as in_progress_blocks,
+        COALESCE(SUM(b.amount), 0) as total_amount
+      FROM blocks b
+      LEFT JOIN block_claims bc ON b.block_id = bc.block_id
+      WHERE b.manager_id = $1
+    `;
+
+    const params = [managerId];
+    let paramIndex = 2;
+
+    if (startDate) {
+      blockStatsQuery += ` AND b.date >= $${paramIndex}::date`;
+      params.push(startDate);
+      paramIndex++;
+    }
+
+    if (endDate) {
+      blockStatsQuery += ` AND b.date <= $${paramIndex}::date`;
+      params.push(endDate);
+    }
+
+    const blockStatsResult = await pool.query(blockStatsQuery, params);
+
+    // Get blocks by date for the last 7 days
+    const recentBlocksQuery = `
+      SELECT 
+        b.date,
+        COUNT(*) as block_count,
+        COALESCE(SUM(b.amount), 0) as daily_amount
+      FROM blocks b
+      WHERE b.manager_id = $1 
+        AND b.date >= CURRENT_DATE - INTERVAL '7 days'
+      GROUP BY b.date
+      ORDER BY b.date DESC
+    `;
+    const recentBlocksResult = await pool.query(recentBlocksQuery, [managerId]);
+
+    res.json({
+      success: true,
+      stats: {
+        storeCount: parseInt(storeCountResult.rows[0].store_count),
+        blocks: {
+          total: parseInt(blockStatsResult.rows[0].total_blocks),
+          accepted: parseInt(blockStatsResult.rows[0].accepted_blocks),
+          available: parseInt(blockStatsResult.rows[0].available_blocks),
+          expired: parseInt(blockStatsResult.rows[0].expired_blocks),
+          completed: parseInt(blockStatsResult.rows[0].completed_blocks),
+          inProgress: parseInt(blockStatsResult.rows[0].in_progress_blocks)
+        },
+        totalAmount: parseFloat(blockStatsResult.rows[0].total_amount),
+        recentActivity: recentBlocksResult.rows
+      }
+    });
+  } catch (error) {
+    console.error('Error fetching manager stats:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Failed to fetch statistics' 
+    });
+  }
+});
+
 // Manager phone signup (simplified for phone auth)
 app.post('/api/managers/phone-signup', async (req, res) => {
   const { 
