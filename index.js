@@ -941,7 +941,8 @@ app.post('/api/managers/signup', async (req, res) => {
     first_name, 
     last_name, 
     email, 
-    phone_number
+    phone_number,
+    role  // ADD THIS LINE
   } = req.body;
 
   if (!clerk_user_id || !first_name || !last_name || !phone_number) {
@@ -1021,8 +1022,8 @@ const result = await client.query(insertQuery, [
   first_name,
   last_name,
   phone_number,
-  role || null
-]);
+  req.body.role || null  // Use req.body.role instead of just role
+]);;
 
     await client.query('COMMIT');
 
