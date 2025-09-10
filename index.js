@@ -108,6 +108,8 @@ app.get('/api/location/blocks', async (req, res) => {
             bc.service_status,
             bc.check_in_time,
             bc.check_out_time,
+            bc.cancellation_type,
+bc.cancelled_by,
             ROW_NUMBER() OVER (PARTITION BY bc.block_id ORDER BY bc.claim_time DESC) AS rn
           FROM block_claims bc
         ) sub
@@ -170,6 +172,8 @@ app.get('/api/location/blocks', async (req, res) => {
       serviceStatus: row.service_status,  // Service status from claims if needed
       claimTime: row.claim_time,
       claimId: row.claim_id,
+      cancellationType: row.cancellation_type,
+cancelledBy: row.cancelled_by,
       managerId: row.manager_id,
       createdBy: row.manager_id ? {
         id: row.manager_id,
