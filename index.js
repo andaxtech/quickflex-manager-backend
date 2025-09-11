@@ -7,8 +7,11 @@ const { Pool } = require('pg');
 require('dotenv').config();
 
 const WeatherService = require('./weatherService');
-// Initialize weather service
-const weatherService = new WeatherService(process.env.OPENWEATHER_API_KEY);
+// Initialize weather service with OpenAI
+const weatherService = new WeatherService(
+  process.env.OPENWEATHER_API_KEY,
+  process.env.OPENAI_API_KEY
+);
 
 const app = express();
 app.use(cors());
