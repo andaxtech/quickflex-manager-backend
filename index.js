@@ -1,8 +1,14 @@
 const express = require('express');
+
+
 const { Storage } = require('@google-cloud/storage');
 const cors = require('cors');
 const { Pool } = require('pg');
 require('dotenv').config();
+
+const WeatherService = require('./weatherService');
+// Initialize weather service
+const weatherService = new WeatherService(process.env.OPENWEATHER_API_KEY);
 
 const app = express();
 app.use(cors());
@@ -47,6 +53,8 @@ app.post('/api/verify-store', async (req, res) => {
     }
 
     const store = checkResult.rows[0];
+
+    
 
     const existsQuery = `
       SELECT 1 FROM manager_store_links
@@ -779,7 +787,8 @@ app.get(/^\/api\/drivers\/photo\/(.*)/, async (req, res) => {
   }
 });
 
-// ✅ Get stores linked to a manager
+
+// Update the my-stores endpoint
 app.get('/api/my-stores', async (req, res) => {
   const { managerId } = req.query;
 
@@ -789,19 +798,41 @@ app.get('/api/my-stores', async (req, res) => {
 
   try {
     const query = `
-      SELECT l.store_id AS id, l.city, l.location_id AS "locationId"
+      SELECT l.store_id AS id, l.city, l.region as state, l.location_id AS "locationId"
       FROM manager_store_links msl
       JOIN locations l ON msl.store_id = l.store_id
       WHERE msl.manager_id = $1
     `;
     const result = await pool.query(query, [managerId]);
 
-    res.json({ success: true, stores: result.rows });
+    // Fetch weather data for all stores
+    const weatherMap = await weatherService.getWeatherForStores(result.rows);
+
+    // Enrich stores with weather data
+    const enrichedStores = result.rows.map((store) => ({
+      ...store,
+      weather: weatherMap[store.id] || {
+        temperature: 0,
+        condition: 'Unknown',
+        high: 0,
+        low: 0,
+        alert: undefined
+      },
+      // You can keep the mock shift data for now
+      shifts: {
+        open: Math.floor(Math.random() * 20 + 10),
+        booked: Math.floor(Math.random() * 10)
+      }
+    }));
+
+    res.json({ success: true, stores: enrichedStores });
   } catch (err) {
     console.error('❌ Error fetching manager stores:', err);
     res.status(500).json({ success: false, message: 'Internal server error' });
   }
 });
+
+
 
 // ✅ Remove store from manager (delete link)
 app.delete('/api/my-stores/:storeId', async (req, res) => {
@@ -1282,3 +1313,9 @@ const PORT = process.env.PORT || 5003;
 app.listen(PORT, () => {
   console.log('✅ Manager backend is up and running on port', PORT);
 });
+
+
+
+
+
+
