@@ -56,19 +56,8 @@ class WeatherService {
             actionRequired = 'Cold weather - expect 20% more orders';
           }
 
-          return {
-            temperature: temp,
-            condition: weatherCondition,
-            icon: data.weather[0].icon,
-            
-            // Business metrics
-            orderImpact, // Percentage increase in expected orders
-            driverSafety, // 'normal', 'caution', 'high-risk'
-            actionRequired, // Specific manager action
-            
-            // Simplified alerts
-            alert: this.getBusinessAlert(data)
-          };
+          // Use the new smart insight generator
+return this.generateSmartInsight(data, null);
     } catch (error) {
       console.error(`Weather API error for ${city}, ${state}:`, error.message);
       return null;
@@ -164,6 +153,98 @@ class WeatherService {
     }
     
     return null;
+  }
+  generateSmartInsight(weatherData, storeData) {
+    const temp = Math.round(weatherData.main.temp);
+    const condition = weatherData.weather[0].main;
+    const windSpeed = weatherData.wind.speed;
+    const dayOfWeek = new Date().getDay();
+    const hour = new Date().getHours();
+    
+    // Base patterns (these could come from a database of historical data)
+    const patterns = {
+      rain: { orderIncrease: 25, driverNeed: 2, peakShift: 1 },
+      snow: { orderIncrease: 35, driverNeed: 3, peakShift: 2 },
+      extreme_heat: { orderIncrease: 15, driverNeed: 1, peakShift: 0 },
+      extreme_cold: { orderIncrease: 20, driverNeed: 1, peakShift: 1 },
+      high_wind: { orderIncrease: 10, driverNeed: 1, peakShift: 0 }
+    };
+    
+    let insight = null;
+    let severity = 'info';
+    let metrics = {};
+    
+    // Rain/Snow logic
+    if (['Rain', 'Drizzle', 'Thunderstorm'].includes(condition)) {
+      const pattern = patterns.rain;
+      insight = `Rain starting around ${this.predictRainTime(weatherData)}. Expect busy dinner rush.`;
+      severity = 'warning';
+      metrics = {
+        expectedOrderIncrease: pattern.orderIncrease,
+        recommendedExtraDrivers: pattern.driverNeed,
+        peakHours: '5-8 PM'
+      };
+    }
+    else if (condition === 'Snow') {
+      insight = `Snow conditions - customers order in but drivers move slowly. Staff up early.`;
+      severity = 'critical';
+      metrics = {
+        expectedOrderIncrease: patterns.snow.orderIncrease,
+        recommendedExtraDrivers: patterns.snow.driverNeed,
+        peakHours: 'All day'
+      };
+    }
+    // Temperature extremes
+    else if (temp > 95) {
+      insight = `Extreme heat - ensure driver hydration. AC seekers will order more.`;
+      severity = 'warning';
+      metrics = {
+        expectedOrderIncrease: patterns.extreme_heat.orderIncrease,
+        recommendedExtraDrivers: patterns.extreme_heat.driverNeed,
+        peakHours: '12-3 PM'
+      };
+    }
+    else if (temp < 35) {
+      insight = `Freezing conditions - comfort food orders spike. Watch for icy roads.`;
+      severity = temp < 25 ? 'critical' : 'warning';
+      metrics = {
+        expectedOrderIncrease: patterns.extreme_cold.orderIncrease,
+        recommendedExtraDrivers: patterns.extreme_cold.driverNeed,
+        peakHours: '6-9 PM'
+      };
+    }
+    // High winds
+    else if (windSpeed > 25) {
+      insight = `High winds - secure driver top-signs. Possible delays.`;
+      severity = 'warning';
+      metrics = {
+        expectedOrderIncrease: patterns.high_wind.orderIncrease,
+        recommendedExtraDrivers: patterns.high_wind.driverNeed
+      };
+    }
+    
+    // Friday/Saturday adjustment
+    if ((dayOfWeek === 5 || dayOfWeek === 6) && metrics.expectedOrderIncrease) {
+      metrics.expectedOrderIncrease = Math.round(metrics.expectedOrderIncrease * 1.2);
+      if (insight) insight += ' Weekend multiplier in effect.';
+    }
+    
+    return {
+      temperature: temp,
+      condition: condition,
+      icon: weatherData.weather[0].icon,
+      insight: insight,
+      severity: severity,
+      metrics: metrics
+    };
+  }
+  
+  predictRainTime(weatherData) {
+    // This could be enhanced with real forecast data
+    const currentHour = new Date().getHours();
+    if (currentHour < 12) return '2-3 PM';
+    if (currentHour < 17) return '5-6 PM';
+    return 'next 2 hours';
   }
 }
 
