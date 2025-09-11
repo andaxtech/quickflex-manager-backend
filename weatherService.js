@@ -142,31 +142,29 @@ class WeatherService {
 
     return weatherMap;
   }
+  getBusinessAlert(weatherData) {
+    const temp = weatherData.main.temp;
+    const condition = weatherData.weather[0].main;
+    
+    // Priority alerts for managers
+    if (['Rain', 'Drizzle', 'Thunderstorm'].includes(condition)) {
+      return '🌧️ +25% orders expected';
+    }
+    if (condition === 'Snow') {
+      return '🌨️ +30% orders, add drivers';
+    }
+    if (temp > 95) {
+      return '🔥 Extreme heat - hydration breaks';
+    }
+    if (temp < 32) {
+      return '❄️ Freezing - drive carefully';
+    }
+    if (weatherData.wind.speed > 25) {
+      return '💨 High winds - secure items';
+    }
+    
+    return null;
+  }
 }
-
-getBusinessAlert(weatherData) {
-  const temp = weatherData.main.temp;
-  const condition = weatherData.weather[0].main;
-  
-  // Priority alerts for managers
-  if (['Rain', 'Drizzle', 'Thunderstorm'].includes(condition)) {
-    return '🌧️ +25% orders expected';
-  }
-  if (condition === 'Snow') {
-    return '🌨️ +30% orders, add drivers';
-  }
-  if (temp > 95) {
-    return '🔥 Extreme heat - hydration breaks';
-  }
-  if (temp < 32) {
-    return '❄️ Freezing - drive carefully';
-  }
-  if (weatherData.wind.speed > 25) {
-    return '💨 High winds - secure items';
-  }
-  
-  return null;
-}
-
 
 module.exports = WeatherService;
