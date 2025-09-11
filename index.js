@@ -805,8 +805,12 @@ app.get('/api/my-stores', async (req, res) => {
     `;
     const result = await pool.query(query, [managerId]);
 
-    // Fetch weather data for all stores
-    const weatherMap = await weatherService.getWeatherForStores(result.rows);
+    // Fetch weather data for all stores - fix the property name mismatch
+const storesWithCorrectId = result.rows.map(store => ({
+  ...store,
+  store_id: store.id // Add store_id property that weatherService expects
+}));
+const weatherMap = await weatherService.getWeatherForStores(storesWithCorrectId);
 
     // Enrich stores with weather data
     const enrichedStores = result.rows.map((store) => ({

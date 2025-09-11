@@ -21,18 +21,54 @@ class WeatherService {
 
       const data = response.data;
       
-      return {
-        temperature: Math.round(data.main.temp),
-        condition: data.weather[0].main,
-        description: data.weather[0].description,
-        high: Math.round(data.main.temp_max),
-        low: Math.round(data.main.temp_min),
-        humidity: data.main.humidity,
-        windSpeed: Math.round(data.wind.speed),
-        icon: data.weather[0].icon,
-        // Check for severe weather conditions
-        alert: this.checkForAlerts(data)
-      };
+      const weatherCondition = data.weather[0].main;
+          const temp = Math.round(data.main.temp);
+          const isRainy = ['Rain', 'Drizzle', 'Thunderstorm'].includes(weatherCondition);
+          const isSnowy = ['Snow'].includes(weatherCondition);
+          const isSevere = temp > 95 || temp < 35 || data.wind.speed > 25;
+
+          // Calculate business impact
+          let orderImpact = 0;
+          let driverSafety = 'normal';
+          let actionRequired = null;
+
+          // Rain = 20-25% more orders
+          if (isRainy) {
+            orderImpact = 25;
+            driverSafety = 'caution';
+            actionRequired = 'Schedule extra drivers - expect 25% more orders';
+          }
+
+          // Snow = 30%+ more orders but slower delivery
+          if (isSnowy) {
+            orderImpact = 30;
+            driverSafety = 'high-risk';
+            actionRequired = 'Add 2-3 extra drivers, expect delays';
+          }
+
+          // Extreme temps = more orders
+          if (temp > 90) {
+            orderImpact = 15;
+            actionRequired = 'Hot weather - ensure driver hydration';
+          } else if (temp < 40) {
+            orderImpact = 20;
+            driverSafety = 'caution';
+            actionRequired = 'Cold weather - expect 20% more orders';
+          }
+
+          return {
+            temperature: temp,
+            condition: weatherCondition,
+            icon: data.weather[0].icon,
+            
+            // Business metrics
+            orderImpact, // Percentage increase in expected orders
+            driverSafety, // 'normal', 'caution', 'high-risk'
+            actionRequired, // Specific manager action
+            
+            // Simplified alerts
+            alert: this.getBusinessAlert(data)
+          };
     } catch (error) {
       console.error(`Weather API error for ${city}, ${state}:`, error.message);
       return null;
@@ -107,5 +143,30 @@ class WeatherService {
     return weatherMap;
   }
 }
+
+getBusinessAlert(weatherData) {
+  const temp = weatherData.main.temp;
+  const condition = weatherData.weather[0].main;
+  
+  // Priority alerts for managers
+  if (['Rain', 'Drizzle', 'Thunderstorm'].includes(condition)) {
+    return '🌧️ +25% orders expected';
+  }
+  if (condition === 'Snow') {
+    return '🌨️ +30% orders, add drivers';
+  }
+  if (temp > 95) {
+    return '🔥 Extreme heat - hydration breaks';
+  }
+  if (temp < 32) {
+    return '❄️ Freezing - drive carefully';
+  }
+  if (weatherData.wind.speed > 25) {
+    return '💨 High winds - secure items';
+  }
+  
+  return null;
+}
+
 
 module.exports = WeatherService;
