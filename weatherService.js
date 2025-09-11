@@ -1,9 +1,17 @@
 const axios = require('axios');
+const OpenAI = require('openai');
 
 class WeatherService {
-  constructor(apiKey) {
+  constructor(apiKey, openAIKey) {
     this.apiKey = apiKey;
+    this.openAIKey = openAIKey;
     this.baseUrl = 'https://api.openweathermap.org/data/2.5';
+    
+    if (this.openAIKey) {
+      this.openai = new OpenAI({
+        apiKey: this.openAIKey
+      });
+    }
   }
 
   async getWeatherByCity(city, state) {
@@ -20,44 +28,9 @@ class WeatherService {
       });
 
       const data = response.data;
-      
-      const weatherCondition = data.weather[0].main;
-          const temp = Math.round(data.main.temp);
-          const isRainy = ['Rain', 'Drizzle', 'Thunderstorm'].includes(weatherCondition);
-          const isSnowy = ['Snow'].includes(weatherCondition);
-          const isSevere = temp > 95 || temp < 35 || data.wind.speed > 25;
 
-          // Calculate business impact
-          let orderImpact = 0;
-          let driverSafety = 'normal';
-          let actionRequired = null;
-
-          // Rain = 20-25% more orders
-          if (isRainy) {
-            orderImpact = 25;
-            driverSafety = 'caution';
-            actionRequired = 'Schedule extra drivers - expect 25% more orders';
-          }
-
-          // Snow = 30%+ more orders but slower delivery
-          if (isSnowy) {
-            orderImpact = 30;
-            driverSafety = 'high-risk';
-            actionRequired = 'Add 2-3 extra drivers, expect delays';
-          }
-
-          // Extreme temps = more orders
-          if (temp > 90) {
-            orderImpact = 15;
-            actionRequired = 'Hot weather - ensure driver hydration';
-          } else if (temp < 40) {
-            orderImpact = 20;
-            driverSafety = 'caution';
-            actionRequired = 'Cold weather - expect 20% more orders';
-          }
-
-          // Use the new smart insight generator
-return this.generateSmartInsight(data, null);
+          // Use the new smart insight generator (now async)
+          return await this.generateSmartInsight(data, null);
     } catch (error) {
       console.error(`Weather API error for ${city}, ${state}:`, error.message);
       return null;
@@ -154,7 +127,18 @@ return this.generateSmartInsight(data, null);
     
     return null;
   }
-  generateSmartInsight(weatherData, storeData) {
+  async generateSmartInsight(weatherData, storeData) {
+    // Try AI first if available
+    if (this.openai) {
+      try {
+        const aiInsight = await this.generateAIInsight(weatherData, storeData);
+        if (aiInsight) return aiInsight;
+      } catch (error) {
+        console.error('AI insight generation failed, falling back to rules:', error.message);
+      }
+    }
+    
+    // Your existing code continues here unchanged
     const temp = Math.round(weatherData.main.temp);
     const condition = weatherData.weather[0].main;
     const windSpeed = weatherData.wind.speed;
@@ -224,10 +208,35 @@ return this.generateSmartInsight(data, null);
     }
     
     // Friday/Saturday adjustment
-    if ((dayOfWeek === 5 || dayOfWeek === 6) && metrics.expectedOrderIncrease) {
-      metrics.expectedOrderIncrease = Math.round(metrics.expectedOrderIncrease * 1.2);
-      if (insight) insight += ' Weekend multiplier in effect.';
-    }
+if ((dayOfWeek === 5 || dayOfWeek === 6) && metrics.expectedOrderIncrease) {
+  metrics.expectedOrderIncrease = Math.round(metrics.expectedOrderIncrease * 1.2);
+  if (insight) insight += ' Weekend multiplier in effect.';
+}
+
+// Handle normal conditions with positive messaging
+if (!insight) {
+  const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+  const currentDay = dayNames[dayOfWeek];
+  
+  if (temp >= 65 && temp <= 80 && !['Rain', 'Snow', 'Thunderstorm'].includes(condition)) {
+    insight = `Perfect ${temp}°F - expect steady ${currentDay} business. Great day for driver retention!`;
+    severity = 'info';
+  } else if (temp >= 50 && temp < 65) {
+    insight = `Mild ${temp}°F - typical ${currentDay} patterns. Good conditions for on-time delivery.`;
+    severity = 'info';
+  } else if (temp > 80 && temp <= 95) {
+    insight = `Warm ${temp}°F - stay hydrated. ${currentDay} dinner rush should be normal.`;
+    severity = 'info';
+  } else {
+    insight = `${temp}°F with ${condition.toLowerCase()}. Standard ${currentDay} operations expected.`;
+    severity = 'info';
+  }
+  
+  // Add day-specific insights
+  if (dayOfWeek === 0) insight += ' Sunday family orders peak 5-7 PM.';
+  if (dayOfWeek === 5) insight += ' Friday night rush starts early!';
+  if (dayOfWeek === 1) insight += ' Mondays are 15% slower on average.';
+}
     
     return {
       temperature: temp,
@@ -245,6 +254,60 @@ return this.generateSmartInsight(data, null);
     if (currentHour < 12) return '2-3 PM';
     if (currentHour < 17) return '5-6 PM';
     return 'next 2 hours';
+  }
+
+  async generateAIInsight(weatherData, storeData) {
+    const temp = Math.round(weatherData.main.temp);
+    const condition = weatherData.weather[0].main;
+    const windSpeed = Math.round(weatherData.wind.speed);
+    const dayOfWeek = new Date().toLocaleDateString('en-US', { weekday: 'long' });
+    const hour = new Date().getHours();
+    
+    const prompt = `As a pizza delivery operations assistant, provide a brief, actionable insight for a store manager.
+
+Current conditions:
+- Temperature: ${temp}°F
+- Weather: ${condition}
+- Wind: ${windSpeed} mph
+- Day: ${dayOfWeek}
+- Hour: ${hour}:00 (24-hour format)
+${storeData ? `- Store: ${storeData.city}, ${storeData.state}` : ''}
+
+Provide a JSON response with:
+1. "insight": One positive, actionable sentence (max 100 chars)
+2. "severity": "info", "warning", or "critical"
+3. "metrics": {
+     "expectedOrderIncrease": percentage (0 if normal),
+     "recommendedExtraDrivers": number (0 if none),
+     "peakHours": string (e.g., "5-8 PM") or null
+   }
+
+Focus on: staffing decisions, order volume expectations, delivery conditions, and opportunities.
+Frame normal weather positively. Example: "Perfect 72°F Tuesday - great for driver retention!"`;
+
+    try {
+      const completion = await this.openai.chat.completions.create({
+        model: "gpt-3.5-turbo",
+        messages: [{ role: "user", content: prompt }],
+        temperature: 0.7,
+        max_tokens: 200,
+        response_format: { type: "json_object" }
+      });
+
+      const response = JSON.parse(completion.choices[0].message.content);
+      
+      return {
+        temperature: temp,
+        condition: condition,
+        icon: weatherData.weather[0].icon,
+        insight: response.insight,
+        severity: response.severity || 'info',
+        metrics: response.metrics || {}
+      };
+    } catch (error) {
+      console.error('OpenAI API error:', error);
+      return null; // Will fallback to rule-based system
+    }
   }
 }
 
