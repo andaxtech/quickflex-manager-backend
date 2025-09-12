@@ -828,19 +828,53 @@ app.get('/api/my-stores', async (req, res) => {
     }));
 const weatherMap = await weatherService.getWeatherForStores(storesWithCorrectId);
 
-    // Enrich stores with weather data
-    const enrichedStores = result.rows.map((store) => ({
-      ...store,
-      weather: weatherMap[store.id] || {
-        temperature: 0,
-        condition: 'Unknown',
-        high: 0,
-        low: 0,
-        alert: undefined
-      },
-      // You can keep the mock shift data for now
-      shifts: await this.getStoreShiftStats(store.locationId) || { open: 0, booked: 0 }
-    }));
+    // Helper function to get shift stats
+const getStoreShiftStats = async (locationId) => {
+  try {
+    const today = new Date().toISOString().split('T')[0];
+    const shiftQuery = `
+      SELECT 
+        COUNT(DISTINCT b.block_id) as total_blocks,
+        COUNT(DISTINCT CASE WHEN bc.block_id IS NOT NULL THEN b.block_id END) as booked_blocks
+      FROM blocks b
+      LEFT JOIN block_claims bc ON b.block_id = bc.block_id
+      WHERE b.location_id = $1 
+        AND b.date >= $2::date
+        AND b.status = 'available'
+    `;
+    const shiftResult = await pool.query(shiftQuery, [locationId, today]);
+    
+    const total = parseInt(shiftResult.rows[0].total_blocks) || 0;
+    const booked = parseInt(shiftResult.rows[0].booked_blocks) || 0;
+    
+    return {
+      open: total - booked,
+      booked: booked
+    };
+  } catch (err) {
+    console.error('Error getting shift stats:', err);
+    return { open: 0, booked: 0 };
+  }
+};
+
+// Get shift stats for all stores
+const shiftPromises = result.rows.map(store => 
+  getStoreShiftStats(store.locationId)
+);
+const shiftResults = await Promise.all(shiftPromises);
+
+// Enrich stores with weather and shift data
+const enrichedStores = result.rows.map((store, index) => ({
+  ...store,
+  weather: weatherMap[store.id] || {
+    temperature: 0,
+    condition: 'Unknown',
+    high: 0,
+    low: 0,
+    alert: undefined
+  },
+  shifts: shiftResults[index] || { open: 0, booked: 0 }
+}));
 
     res.json({ success: true, stores: enrichedStores });
   } catch (err) {
