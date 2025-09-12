@@ -128,94 +128,39 @@ class WeatherService {
     return null;
   }
   async generateSmartInsight(weatherData, storeData) {
-    // Try AI first if available
-    if (this.openai) {
-      try {
-        const aiInsight = await this.generateAIInsight(weatherData, storeData);
-        if (aiInsight) return aiInsight;
-      } catch (error) {
-        console.error('AI insight generation failed, falling back to rules:', error.message);
-      }
-    }
-    
-    // Your existing code continues here unchanged
     const temp = Math.round(weatherData.main.temp);
     const condition = weatherData.weather[0].main;
-    const windSpeed = weatherData.wind.speed;
-    // Calculate store's local time using offset
-const now = new Date();
-const storeOffset = this.getStoreOffset(storeData); // in minutes
-const storeLocalTime = new Date(now.getTime() + (storeOffset * 60000));
-const dayOfWeek = storeLocalTime.getUTCDay();
-const hour = storeLocalTime.getUTCHours();
     
-    // Base patterns (these could come from a database of historical data)
-    const patterns = {
-      rain: { orderIncrease: 25, driverNeed: 2, peakShift: 1 },
-      snow: { orderIncrease: 35, driverNeed: 3, peakShift: 2 },
-      extreme_heat: { orderIncrease: 15, driverNeed: 1, peakShift: 0 },
-      extreme_cold: { orderIncrease: 20, driverNeed: 1, peakShift: 1 },
-      high_wind: { orderIncrease: 10, driverNeed: 1, peakShift: 0 }
-    };
+    // Simple, actionable metrics only
+    let metrics = null;
     
-    let insight = null;
-    let severity = 'info';
-    let metrics = {};
-    
-    // Rain/Snow logic
     if (['Rain', 'Drizzle', 'Thunderstorm'].includes(condition)) {
-      const pattern = patterns.rain;
-      insight = `Rain starting around ${this.predictRainTime(weatherData)}. Expect busy dinner rush.`;
-      severity = 'warning';
       metrics = {
-        expectedOrderIncrease: pattern.orderIncrease,
-        recommendedExtraDrivers: pattern.driverNeed,
+        expectedOrderIncrease: 25,
+        recommendedExtraDrivers: 2,
         peakHours: '5-8 PM'
       };
-    }
-    else if (condition === 'Snow') {
-      insight = `Snow conditions - customers order in but drivers move slowly. Staff up early.`;
-      severity = 'critical';
+    } else if (condition === 'Snow') {
       metrics = {
-        expectedOrderIncrease: patterns.snow.orderIncrease,
-        recommendedExtraDrivers: patterns.snow.driverNeed,
+        expectedOrderIncrease: 35,
+        recommendedExtraDrivers: 3,
         peakHours: 'All day'
       };
-    }
-    // Temperature extremes
-    else if (temp > 95) {
-      insight = `Extreme heat - ensure driver hydration. AC seekers will order more.`;
-      severity = 'warning';
+    } else if (temp > 95) {
       metrics = {
-        expectedOrderIncrease: patterns.extreme_heat.orderIncrease,
-        recommendedExtraDrivers: patterns.extreme_heat.driverNeed,
+        expectedOrderIncrease: 15,
+        recommendedExtraDrivers: 1,
         peakHours: '12-3 PM'
       };
     }
-    else if (temp < 35) {
-      insight = `Freezing conditions - comfort food orders spike. Watch for icy roads.`;
-      severity = temp < 25 ? 'critical' : 'warning';
-      metrics = {
-        expectedOrderIncrease: patterns.extreme_cold.orderIncrease,
-        recommendedExtraDrivers: patterns.extreme_cold.driverNeed,
-        peakHours: '6-9 PM'
-      };
-    }
-    // High winds
-    else if (windSpeed > 25) {
-      insight = `High winds - secure driver top-signs. Possible delays.`;
-      severity = 'warning';
-      metrics = {
-        expectedOrderIncrease: patterns.high_wind.orderIncrease,
-        recommendedExtraDrivers: patterns.high_wind.driverNeed
-      };
-    }
     
-    // Friday/Saturday adjustment
-if ((dayOfWeek === 5 || dayOfWeek === 6) && metrics.expectedOrderIncrease) {
-  metrics.expectedOrderIncrease = Math.round(metrics.expectedOrderIncrease * 1.2);
-  if (insight) insight += ' Weekend multiplier in effect.';
-}
+    return {
+      temperature: temp,
+      condition: condition,
+      icon: weatherData.weather[0].icon,
+      metrics: metrics || {}
+    };
+  }
 
 // Handle normal conditions with positive messaging
 if (!insight) {
