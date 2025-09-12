@@ -280,7 +280,9 @@ Current conditions:
 - Wind: ${windSpeed} mph
 - Day: ${dayOfWeek}
 - Hour: ${hour}:00 (24-hour format)
-${storeData ? `- Store: ${storeData.city}, ${storeData.state}` : ''}
+${storeData ? `- Store: ${storeData.city}, ${storeData.state}
+- Current open shifts: ${storeData.shifts?.open || 'unknown'}
+- Current booked shifts: ${storeData.shifts?.booked || 'unknown'}` : ''}
 
 Provide a JSON response with:
 1. "insight": One positive, actionable sentence (max 100 chars)

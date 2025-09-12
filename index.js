@@ -801,18 +801,31 @@ app.get('/api/my-stores', async (req, res) => {
 
   try {
     const query = `
-      SELECT l.store_id AS id, l.city, l.region as state, l.location_id AS "locationId"
-      FROM manager_store_links msl
-      JOIN locations l ON msl.store_id = l.store_id
-      WHERE msl.manager_id = $1
-    `;
+  SELECT 
+    l.store_id AS id, 
+    l.city, 
+    l.region as state, 
+    l.location_id AS "locationId",
+    l.time_zone_code as "timeZoneCode",
+    l.delivery_fee,
+    l.minimum_delivery_order_amount,
+    l.estimated_wait_minutes,
+    l.store_name,
+    l.is_online_now,
+    l.future_order_delay_hours,
+    l.service_hours
+  FROM manager_store_links msl
+  JOIN locations l ON msl.store_id = l.store_id
+  WHERE msl.manager_id = $1
+`;
     const result = await pool.query(query, [managerId]);
 
     // Fetch weather data for all stores - fix the property name mismatch
-const storesWithCorrectId = result.rows.map(store => ({
-  ...store,
-  store_id: store.id // Add store_id property that weatherService expects
-}));
+    const storesWithCorrectId = result.rows.map(store => ({
+      ...store,
+      store_id: store.id,
+      timeZoneCode: store.timeZoneCode // Now includes timezone from query
+    }));
 const weatherMap = await weatherService.getWeatherForStores(storesWithCorrectId);
 
     // Enrich stores with weather data
@@ -826,10 +839,7 @@ const weatherMap = await weatherService.getWeatherForStores(storesWithCorrectId)
         alert: undefined
       },
       // You can keep the mock shift data for now
-      shifts: {
-        open: Math.floor(Math.random() * 20 + 10),
-        booked: Math.floor(Math.random() * 10)
-      }
+      shifts: await this.getStoreShiftStats(store.locationId) || { open: 0, booked: 0 }
     }));
 
     res.json({ success: true, stores: enrichedStores });
@@ -1319,6 +1329,41 @@ app.post('/api/managers/phone-signup', async (req, res) => {
 const PORT = process.env.PORT || 5003;
 app.listen(PORT, () => {
   console.log('✅ Manager backend is up and running on port', PORT);
+
+
+
+
+  // Helper function to get shift stats
+const getStoreShiftStats = async (locationId) => {
+  try {
+    const today = new Date().toISOString().split('T')[0];
+    const shiftQuery = `
+      SELECT 
+        COUNT(DISTINCT b.block_id) as total_blocks,
+        COUNT(DISTINCT CASE WHEN bc.block_id IS NOT NULL THEN b.block_id END) as booked_blocks
+      FROM blocks b
+      LEFT JOIN block_claims bc ON b.block_id = bc.block_id
+      WHERE b.location_id = $1 
+        AND b.date >= $2::date
+        AND b.status = 'available'
+    `;
+    const shiftResult = await pool.query(shiftQuery, [locationId, today]);
+    
+    const total = parseInt(shiftResult.rows[0].total_blocks) || 0;
+    const booked = parseInt(shiftResult.rows[0].booked_blocks) || 0;
+    
+    return {
+      open: total - booked,
+      booked: booked
+    };
+  } catch (err) {
+    console.error('Error getting shift stats:', err);
+    return { open: 0, booked: 0 };
+  }
+};
+
+// Use it in the enrichedStores map
+shifts: await getStoreShiftStats(store.locationId) || { open: 0, booked: 0 }
 });
 
 
