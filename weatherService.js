@@ -14,7 +14,7 @@ class WeatherService {
     }
   }
 
-  async getWeatherByCity(city, state) {
+  async getWeatherByCity(city, state, storeData = null) {
     try {
       // Format location for API (e.g., "Calabasas,CA,US")
       const location = `${city},${state},US`;
@@ -30,7 +30,7 @@ class WeatherService {
       const data = response.data;
 
           // Use the new smart insight generator (now async)
-          return await this.generateSmartInsight(data, null);
+          return await this.generateSmartInsight(data, storeData);
     } catch (error) {
       console.error(`Weather API error for ${city}, ${state}:`, error.message);
       return null;
@@ -90,7 +90,7 @@ class WeatherService {
   // Batch fetch for multiple locations (more efficient)
   async getWeatherForStores(stores) {
     const weatherPromises = stores.map(store => 
-      this.getWeatherByCity(store.city, store.state || 'CA')
+      this.getWeatherByCity(store.city, store.state || 'CA', store)
         .then(weather => ({ storeId: store.store_id, weather }))
     );
 
@@ -142,8 +142,12 @@ class WeatherService {
     const temp = Math.round(weatherData.main.temp);
     const condition = weatherData.weather[0].main;
     const windSpeed = weatherData.wind.speed;
-    const dayOfWeek = new Date().getDay();
-    const hour = new Date().getHours();
+    // Calculate store's local time using offset
+const now = new Date();
+const storeOffset = this.getStoreOffset(storeData); // in minutes
+const storeLocalTime = new Date(now.getTime() + (storeOffset * 60000));
+const dayOfWeek = storeLocalTime.getUTCDay();
+const hour = storeLocalTime.getUTCHours();
     
     // Base patterns (these could come from a database of historical data)
     const patterns = {
@@ -260,8 +264,13 @@ if (!insight) {
     const temp = Math.round(weatherData.main.temp);
     const condition = weatherData.weather[0].main;
     const windSpeed = Math.round(weatherData.wind.speed);
-    const dayOfWeek = new Date().toLocaleDateString('en-US', { weekday: 'long' });
-    const hour = new Date().getHours();
+    // Calculate store's local time for AI prompt
+const now = new Date();
+const storeOffset = this.getStoreOffset(storeData); // in minutes
+const storeLocalTime = new Date(now.getTime() + (storeOffset * 60000));
+const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+const dayOfWeek = dayNames[storeLocalTime.getUTCDay()];
+const hour = storeLocalTime.getUTCHours();
     
     const prompt = `As a pizza delivery operations assistant, provide a brief, actionable insight for a store manager.
 
@@ -308,6 +317,19 @@ Frame normal weather positively. Example: "Perfect 72°F Tuesday - great for dri
       console.error('OpenAI API error:', error);
       return null; // Will fallback to rule-based system
     }
+  }
+
+  getStoreOffset(storeData) {
+    // Default to PST if no store data
+    if (!storeData || !storeData.timeZoneCode) return -480; // PST = GMT-08:00
+    
+    const match = storeData.timeZoneCode.match(/GMT([+-])(\d{2}):(\d{2})/);
+    if (!match) return -480; // Default to PST
+    
+    const sign = match[1] === '+' ? 1 : -1;
+    const hours = parseInt(match[2], 10);
+    const mins = parseInt(match[3], 10);
+    return sign * (hours * 60 + mins);
   }
 }
 
