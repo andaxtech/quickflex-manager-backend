@@ -131,69 +131,71 @@ class WeatherService {
     const temp = Math.round(weatherData.main.temp);
     const condition = weatherData.weather[0].main;
     
-    // Simple, actionable metrics only
+    // Initialize all variables
     let metrics = null;
+    let insight = null;
+    let severity = 'info';
     
+    // Set metrics for special weather conditions
     if (['Rain', 'Drizzle', 'Thunderstorm'].includes(condition)) {
       metrics = {
         expectedOrderIncrease: 25,
         recommendedExtraDrivers: 2,
         peakHours: '5-8 PM'
       };
+      insight = `${condition} - expect 25% more orders. Add 2 drivers for 5-8 PM rush.`;
+      severity = 'warning';
     } else if (condition === 'Snow') {
       metrics = {
         expectedOrderIncrease: 35,
         recommendedExtraDrivers: 3,
         peakHours: 'All day'
       };
+      insight = `Snow conditions - expect 35% more orders. Add 3 drivers all day.`;
+      severity = 'critical';
     } else if (temp > 95) {
       metrics = {
         expectedOrderIncrease: 15,
         recommendedExtraDrivers: 1,
         peakHours: '12-3 PM'
       };
+      insight = `Heat advisory ${temp}°F - expect 15% more orders. Add 1 driver for lunch.`;
+      severity = 'warning';
     }
-    
-    return {
-      temperature: temp,
-      condition: condition,
-      icon: weatherData.weather[0].icon,
-      metrics: metrics || {}
-    };
-  }
-
-// Handle normal conditions with positive messaging
-if (!insight) {
-  const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-  const currentDay = dayNames[dayOfWeek];
   
-  if (temp >= 65 && temp <= 80 && !['Rain', 'Snow', 'Thunderstorm'].includes(condition)) {
-    insight = `Perfect ${temp}°F - expect steady ${currentDay} business. Great day for driver retention!`;
-    severity = 'info';
-  } else if (temp >= 50 && temp < 65) {
-    insight = `Mild ${temp}°F - typical ${currentDay} patterns. Good conditions for on-time delivery.`;
-    severity = 'info';
-  } else if (temp > 80 && temp <= 95) {
-    insight = `Warm ${temp}°F - stay hydrated. ${currentDay} dinner rush should be normal.`;
-    severity = 'info';
-  } else {
-    insight = `${temp}°F with ${condition.toLowerCase()}. Standard ${currentDay} operations expected.`;
-    severity = 'info';
-  }
+    // Handle normal conditions with positive messaging
+    if (!insight) {
+      const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+      const dayOfWeek = new Date().getDay();
+      const currentDay = dayNames[dayOfWeek];
+      
+      if (temp >= 65 && temp <= 80 && !['Rain', 'Snow', 'Thunderstorm'].includes(condition)) {
+        insight = `Perfect ${temp}°F - expect steady ${currentDay} business. Great day for driver retention!`;
+        severity = 'info';
+      } else if (temp >= 50 && temp < 65) {
+        insight = `Mild ${temp}°F - typical ${currentDay} patterns. Good conditions for on-time delivery.`;
+        severity = 'info';
+      } else if (temp > 80 && temp <= 95) {
+        insight = `Warm ${temp}°F - stay hydrated. ${currentDay} dinner rush should be normal.`;
+        severity = 'info';
+      } else {
+        insight = `${temp}°F with ${condition.toLowerCase()}. Standard ${currentDay} operations expected.`;
+        severity = 'info';
+      }
+      
+      // Add day-specific insights
+      if (dayOfWeek === 0) insight += ' Sunday family orders peak 5-7 PM.';
+      if (dayOfWeek === 5) insight += ' Friday night rush starts early!';
+      if (dayOfWeek === 1) insight += ' Mondays are 15% slower on average.';
+    }
   
-  // Add day-specific insights
-  if (dayOfWeek === 0) insight += ' Sunday family orders peak 5-7 PM.';
-  if (dayOfWeek === 5) insight += ' Friday night rush starts early!';
-  if (dayOfWeek === 1) insight += ' Mondays are 15% slower on average.';
-}
-    
     return {
       temperature: temp,
       condition: condition,
       icon: weatherData.weather[0].icon,
       insight: insight,
       severity: severity,
-      metrics: metrics
+      metrics: metrics || {}
     };
   }
   
