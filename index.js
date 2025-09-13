@@ -864,17 +864,48 @@ const shiftPromises = result.rows.map(store =>
 const shiftResults = await Promise.all(shiftPromises);
 
 // Enrich stores with weather and shift data
-const enrichedStores = result.rows.map((store, index) => ({
-  ...store,
-  weather: weatherMap[store.id] || {
-    temperature: 0,
-    condition: 'Unknown',
-    high: 0,
-    low: 0,
-    alert: undefined
-  },
-  shifts: shiftResults[index] || { open: 0, booked: 0 }
-}));
+const enrichedStores = result.rows.map((store, index) => {
+  const weather = weatherMap[store.id];
+  
+  // Transform weather severity to operational impact
+  let operationalImpact = {
+    severity: 'normal',
+    todayActions: null,
+    weekOutlook: null
+  };
+  
+  if (weather && weather.severity) {
+    // Map weather severity to operational severity
+    if (weather.severity === 'critical') {
+      operationalImpact.severity = 'high';
+    } else if (weather.severity === 'warning') {
+      operationalImpact.severity = 'moderate';
+    }
+    
+    // Use the AI-generated insight for today's actions
+    if (weather.insight) {
+      operationalImpact.todayActions = weather.insight;
+    }
+    
+    // Add week outlook based on metrics
+    if (weather.metrics?.expectedOrderIncrease) {
+      operationalImpact.weekOutlook = `Expect ${weather.metrics.expectedOrderIncrease}% order increase during ${weather.metrics.peakHours || 'peak hours'}`;
+    }
+  }
+  
+  return {
+    ...store,
+    weather: weather || {
+      temperature: 0,
+      condition: 'Unknown',
+      high: 0,
+      low: 0,
+      alert: undefined
+    },
+    shifts: shiftResults[index] || { open: 0, booked: 0 },
+    operationalImpact // ADD THIS
+  };
+});
 
     res.json({ success: true, stores: enrichedStores });
   } catch (err) {

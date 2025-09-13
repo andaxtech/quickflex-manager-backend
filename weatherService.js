@@ -29,8 +29,15 @@ class WeatherService {
 
       const data = response.data;
 
-          // Use the new smart insight generator (now async)
-          return await this.generateSmartInsight(data, storeData);
+          // Try AI first if available
+if (this.openai) {
+  const aiResult = await this.generateAIInsight(data, storeData);
+  if (aiResult) return aiResult;
+}
+
+
+// Fall back to rule-based only if AI fails
+return this.generateRuleBasedInsight(data, storeData);
     } catch (error) {
       console.error(`Weather API error for ${city}, ${state}:`, error.message);
       return null;
@@ -127,7 +134,7 @@ class WeatherService {
     
     return null;
   }
-  async generateSmartInsight(weatherData, storeData) {
+  async generateRuleBasedInsight(weatherData, storeData) {
     const temp = Math.round(weatherData.main.temp);
     const condition = weatherData.weather[0].main;
     
