@@ -28,12 +28,15 @@ class WeatherService {
       });
 
       const data = response.data;
+      
+      // Get 5-day forecast
+      const forecast = await this.getWeatherForecast(city, state);
 
-          // Try AI first if available
-if (this.openai) {
-  const aiResult = await this.generateAIInsight(data, storeData);
-  if (aiResult) return aiResult;
-}
+      // Try AI first if available
+      if (this.openai) {
+        const aiResult = await this.generateAIInsight(data, storeData, forecast);
+        if (aiResult) return aiResult;
+      }
 
 
 // Fall back to rule-based only if AI fails
@@ -43,6 +46,77 @@ return this.generateRuleBasedInsight(data, storeData);
       return null;
     }
   }
+
+
+
+
+
+
+  async getWeatherForecast(city, state) {
+    try {
+      const location = `${city},${state},US`;
+      
+      const response = await axios.get(`${this.baseUrl}/forecast`, {
+        params: {
+          q: location,
+          appid: this.apiKey,
+          units: 'imperial',
+          cnt: 40 // 5 days of 3-hour forecasts
+        }
+      });
+
+      // Process forecast data to find significant weather events
+      const forecastData = response.data.list;
+      const dailyForecasts = this.processForecastData(forecastData);
+      
+      return dailyForecasts;
+    } catch (error) {
+      console.error(`Forecast API error for ${city}, ${state}:`, error.message);
+      return null;
+    }
+  }
+
+  processForecastData(forecastList) {
+    // Group by day and extract key weather events
+    const dailyData = {};
+    
+    forecastList.forEach(item => {
+      const date = new Date(item.dt * 1000).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+      
+      if (!dailyData[date]) {
+        dailyData[date] = {
+          temps: [],
+          conditions: [],
+          rain: false,
+          snow: false,
+          extremeHeat: false
+        };
+      }
+      
+      dailyData[date].temps.push(item.main.temp);
+      dailyData[date].conditions.push(item.weather[0].main);
+      
+      if (item.weather[0].main === 'Rain') dailyData[date].rain = true;
+      if (item.weather[0].main === 'Snow') dailyData[date].snow = true;
+      if (item.main.temp > 95) dailyData[date].extremeHeat = true;
+    });
+    
+    // Convert to array with insights
+    return Object.entries(dailyData).slice(0, 5).map(([date, data]) => ({
+      date,
+      high: Math.round(Math.max(...data.temps)),
+      low: Math.round(Math.min(...data.temps)),
+      significantWeather: data.rain || data.snow || data.extremeHeat,
+      conditions: [...new Set(data.conditions)]
+    }));
+  }
+
+
+
+
+
+
+
 
   async getWeatherByCoordinates(lat, lon) {
     try {
@@ -214,10 +288,12 @@ return this.generateRuleBasedInsight(data, storeData);
     return 'next 2 hours';
   }
 
-  async generateAIInsight(weatherData, storeData) {
+  async generateAIInsight(weatherData, storeData, forecastData) {
     const temp = Math.round(weatherData.main.temp);
     const condition = weatherData.weather[0].main;
     const windSpeed = Math.round(weatherData.wind.speed);
+
+
     // Calculate store's local time for AI prompt
 const now = new Date();
 const storeOffset = this.getStoreOffset(storeData); // in minutes
@@ -225,6 +301,15 @@ const storeLocalTime = new Date(now.getTime() + (storeOffset * 60000));
 const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 const dayOfWeek = dayNames[storeLocalTime.getUTCDay()];
 const hour = storeLocalTime.getUTCHours();
+
+
+//this is the part that makes Business intelligence reccomendationsconst forecastSummary = forecastData ? 
+      forecastData.map(day => 
+        `${day.date}: ${day.high}°F/${day.low}°F, ${day.conditions.join('/')}${day.significantWeather ? ' ⚠️' : ''}`
+      ).join('\n') : 'No forecast available';
+    
+    const significantDays = forecastData ? 
+      forecastData.filter(day => day.significantWeather).map(day => day.date) : [];
     
     const prompt = `As a pizza delivery operations assistant, provide a brief, actionable insight for a store manager.
 
@@ -234,21 +319,36 @@ Current conditions:
 - Wind: ${windSpeed} mph
 - Day: ${dayOfWeek}
 - Hour: ${hour}:00 (24-hour format)
+
+5-Day Forecast:
+${forecastSummary}
+${significantDays.length > 0 ? `\nSignificant weather days: ${significantDays.join(', ')}` : ''}
+
 ${storeData ? `- Store: ${storeData.city}, ${storeData.state}
 - Current open shifts: ${storeData.shifts?.open || 'unknown'}
 - Current booked shifts: ${storeData.shifts?.booked || 'unknown'}` : ''}
 
 Provide a JSON response with:
-1. "insight": One positive, actionable sentence (max 100 chars)
+1. "insight": One unique, actionable sentence specific to THESE exact conditions (max 100 chars)
 2. "severity": "info", "warning", or "critical"
 3. "metrics": {
      "expectedOrderIncrease": percentage (0 if normal),
      "recommendedExtraDrivers": number (0 if none),
      "peakHours": string (e.g., "5-8 PM") or null
    }
+4. "todayActions": Specific action for TODAY based on current weather (max 80 chars)
+5. "weekOutlook": 5-day forecast impact - mention specific days if rain/snow/heat expected (max 80 chars)
 
-Focus on: staffing decisions, order volume expectations, delivery conditions, and opportunities.
-Frame normal weather positively. Example: "Perfect 72°F Tuesday - great for driver retention!"`;
+Rules:
+- Be specific to exact temperature, weather, and time
+- Vary responses based on ALL parameters
+- For weekOutlook, only mention days with significant weather
+- Never use generic phrases
+- Include specific numbers and times
+
+Examples:
+- For 78°F Clear with no significant forecast: weekOutlook: "Stable weather all week - normal staffing patterns"
+- For 45°F Clear with rain on Wed: weekOutlook: "Rain expected Wed - plan for 30% surge, add 3 drivers"`;
 
     try {
       const completion = await this.openai.chat.completions.create({
@@ -267,7 +367,9 @@ Frame normal weather positively. Example: "Perfect 72°F Tuesday - great for dri
         icon: weatherData.weather[0].icon,
         insight: response.insight,
         severity: response.severity || 'info',
-        metrics: response.metrics || {}
+        metrics: response.metrics || {},
+        todayActions: response.todayActions || response.insight,
+        weekOutlook: response.weekOutlook || 'Normal week expected'
       };
     } catch (error) {
       console.error('OpenAI API error:', error);
