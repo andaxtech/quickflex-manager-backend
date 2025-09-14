@@ -406,7 +406,7 @@ if (data.events && data.events.length > 0) {
         promptParts.push(`- Traffic Alert: Major delays on nearby routes (${data.traffic.delayMinutes} min)`);
         promptParts.push('');
       }
-    ];
+    
 
     if (data.events && data.events.length > 0) {
       promptParts.push('EVENT IMPACT: Major events detected nearby that will drive pizza demand.');
