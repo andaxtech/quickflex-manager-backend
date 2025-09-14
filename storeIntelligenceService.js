@@ -12,6 +12,47 @@ class StoreIntelligenceService {
     this.config = config;
   }
 
+  // Main method to generate insights
+  async generateStoreInsight(store) {
+    try {
+      // Ensure we have coordinates
+      if (!store.store_latitude || !store.store_longitude) {
+        console.warn(`Store ${store.store_id} missing coordinates`);
+        return this.getFallbackInsight(store);
+      }
+
+      // Collect all data in parallel
+      const [weather, traffic, holidays, events] = await Promise.allSettled([
+        this.weatherService.getWeatherByCity(store.city, store.region || store.state, store),
+        this.getTrafficData(store),
+        this.getHolidays(),
+        this.getLocalEvents(store)
+      ]);
+
+      // Build the data object with store-specific data
+      const collectedData = {
+        weather: weather.status === 'fulfilled' ? weather.value : null,
+        traffic: traffic.status === 'fulfilled' ? traffic.value : null,
+        holidays: holidays.status === 'fulfilled' ? holidays.value : null,
+        events: events.status === 'fulfilled' ? events.value : null,
+        storeType: await this.classifyStore(store),
+        storeStatus: {
+          isOnline: store.is_online_now && !store.is_force_offline,
+          cashLimit: store.cash_limit,
+          deliveryFee: store.delivery_fee,
+          spanishEnabled: store.is_spanish,
+          waitTime: store.estimated_wait_minutes
+        }
+      };
+
+      // Generate AI insight
+      return await this.generateAIInsight(store, collectedData);
+    } catch (error) {
+      console.error('Error generating store insight:', error);
+      return this.getFallbackInsight(store);
+    }
+  }
+
   async classifyStore(store) {
     // First, check if store has classification in database
     const dbClassification = await this.getStoreClassification(store.store_id);
@@ -142,6 +183,8 @@ class StoreIntelligenceService {
     return 'light';
   }
 
+
+  //analyze holidays
   async getHolidays() {
     const cacheKey = 'holidays_US';
     const cached = this.getCached(cacheKey, this.config.cache.holidays);
@@ -165,6 +208,109 @@ class StoreIntelligenceService {
     }
   }
 
+//analyze local events
+async getLocalEvents(store) {
+    const cacheKey = `events_${store.store_id}`;
+    const cached = this.getCached(cacheKey, this.config.cache.events || 3600000); // 1 hour cache
+    if (cached) return cached;
+
+    try {
+      // Ticketmaster requires API key
+      const tmApiKey = process.env.TICKETMASTER_API_KEY;
+      if (!tmApiKey) {
+        console.log('Ticketmaster API key not configured');
+        return [];
+      }
+
+      const now = new Date();
+      const endDate = new Date();
+      endDate.setDate(endDate.getDate() + 7); // Next 7 days
+
+      const response = await axios.get(
+        'https://app.ticketmaster.com/discovery/v2/events.json',
+        {
+          params: {
+            apikey: tmApiKey,
+            latlong: `${store.store_latitude},${store.store_longitude}`,
+            radius: '15', // 15 miles
+            unit: 'miles',
+            startDateTime: now.toISOString().split('.')[0] + 'Z',
+            endDateTime: endDate.toISOString().split('.')[0] + 'Z',
+            size: 20,
+            sort: 'date,asc',
+            classificationName: 'Sports,Music,Arts & Theatre' // High-impact events
+          }
+        }
+      );
+
+      if (!response.data._embedded?.events) {
+        this.setCache(cacheKey, []);
+        return [];
+      }
+
+      // Process and filter events
+      const events = response.data._embedded.events
+        .map(event => ({
+          name: event.name,
+          date: event.dates.start.localDate,
+          time: event.dates.start.localTime,
+          venue: event._embedded?.venues?.[0]?.name || 'Unknown venue',
+          capacity: event._embedded?.venues?.[0]?.boxOfficeInfo?.generalInfo || null,
+          distance: event._embedded?.venues?.[0]?.distance || null,
+          type: event.classifications?.[0]?.segment?.name || 'Event',
+          impact: this.calculateEventImpact(event)
+        }))
+        .filter(event => event.impact > 0.3) // Only high-impact events
+        .slice(0, 5); // Top 5 events
+
+      this.setCache(cacheKey, events);
+      return events;
+    } catch (error) {
+      console.error('Ticketmaster API error:', error.response?.data || error.message);
+      return [];
+    }
+  }
+
+  calculateEventImpact(event) {
+    let impact = 0;
+    
+    // Venue size impact
+    const venue = event._embedded?.venues?.[0];
+    if (venue) {
+      const capacity = parseInt(venue.capacity) || 0;
+      if (capacity > 50000) impact += 0.5;
+      else if (capacity > 20000) impact += 0.4;
+      else if (capacity > 10000) impact += 0.3;
+      else if (capacity > 5000) impact += 0.2;
+      
+      // Distance impact (closer = higher impact)
+      const distance = parseFloat(venue.distance) || 15;
+      if (distance < 3) impact += 0.3;
+      else if (distance < 5) impact += 0.2;
+      else if (distance < 10) impact += 0.1;
+    }
+    
+    // Event type impact
+    const eventType = event.classifications?.[0]?.segment?.name;
+    if (eventType === 'Sports') impact += 0.2;
+    if (eventType === 'Music') impact += 0.15;
+    
+    // Day of week impact
+    const eventDate = new Date(event.dates.start.localDate);
+    const dayOfWeek = eventDate.getDay();
+    if (dayOfWeek === 5 || dayOfWeek === 6) impact += 0.1; // Friday/Saturday
+    
+    return Math.min(impact, 1); // Cap at 1
+  }
+
+
+
+
+
+
+
+
+
   async generateAIInsight(store, data) {
     const prompt = this.buildIntelligencePrompt(store, data);
     
@@ -184,15 +330,20 @@ class StoreIntelligenceService {
     }
   }
 
-  buildIntelligencePrompt(store, data) {
+  async buildIntelligencePrompt(store, data) {
     const now = new Date();
     const localTime = this.getStoreLocalTime(store);
     const baselines = await this.getStoreBaselines(store.store_id);
     
+    // Format events for prompt
+    const eventsSummary = data.events && data.events.length > 0
+      ? data.events.map(e => `${e.date}: ${e.name} at ${e.venue} (${e.type})`).join('; ')
+      : 'No major events';
+    
     return `You are Domino's Store Mentor. Generate ONE actionable insight for store ${store.store_id}.
 
 Store Context:
-- Location: ${store.city}, ${store.state}
+- Location: ${store.city}, ${store.region || store.state}
 - Type: ${data.storeType.type}
 - Local Time: ${localTime}
 - Open Shifts: ${store.shifts?.open || 0}
@@ -202,6 +353,9 @@ Current Data:
 - Weather: ${data.weather ? `${data.weather.temperature}°F, ${data.weather.condition}` : 'unavailable'}
 - Traffic: ${data.traffic ? `${data.traffic.delayMinutes} min delays` : 'normal'}
 - Holidays (next 7 days): ${data.holidays?.slice(0,3).map(h => h.name).join(', ') || 'none'}
+- Local Events: ${eventsSummary}
+
+${data.events && data.events.length > 0 ? 'EVENT IMPACT: Major events detected nearby that will drive pizza demand.' : ''}
 
 Baselines:
 - Delivery: ${baselines.delivery.min}-${baselines.delivery.max} minutes
