@@ -912,15 +912,11 @@ const enrichedStores = await Promise.all(
     // Get full intelligence for each store (cached)
     let intelligence = null;
     try {
-      // Only get intelligence for stores with critical weather or low staffing
-      if (weather?.severity === 'critical' || 
-          weather?.severity === 'warning' || 
-          shiftResults[index].open > 3) {
-        intelligence = await intelligenceService.generateStoreInsight({
-          ...store,
-          shifts: shiftResults[index]
-        });
-      }
+      // Always get intelligence in test mode
+intelligence = await intelligenceService.generateStoreInsight({
+  ...store,
+  shifts: shiftResults[index]
+});
     } catch (error) {
       console.error(`Failed to get intelligence for store ${store.id}:`, error);
     }
