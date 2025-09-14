@@ -413,57 +413,78 @@ calculateCarryoutOpportunity(trigger, data) {
 
   async getEventbriteEvents(store) {
     try {
-      // Try public token first, then API key
-      const ebPublicToken = process.env.EVENTBRITE_PUBLIC_TOKEN;
+      const ebPublicToken = process.env.EVENTBRITE_PUBLIC_TOKEN || process.env.EVENTBRITE_TOKEN;
       const ebApiKey = process.env.EVENTBRITE_API_KEY;
       
       if (!ebPublicToken && !ebApiKey) {
-        console.log('No Eventbrite public token or API key configured');
+        console.log('No Eventbrite credentials configured');
         return [];
       }
   
-      // Use OAuth token format for public token, or API key format
       const authHeader = ebPublicToken 
         ? `Bearer ${ebPublicToken}`
         : `Bearer ${ebApiKey}`;
   
-      const response = await axios.get('https://www.eventbriteapi.com/v3/events/search', {
-        headers: {
-          'Authorization': authHeader,
-          'Accept': 'application/json'
-        },
-        params: {
-          'location.latitude': store.lat,
-          'location.longitude': store.lng,
-          'location.within': '25mi',
-          'start_date.range_start': new Date().toISOString().split('.')[0] + 'Z',  // Format: 2025-09-14T20:10:30Z
-          'start_date.range_end': new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split('.')[0] + 'Z'
-        }
-      });
-
+      // Note: Eventbrite's public API has limitations
+      // Try location-based search first
+      let response;
+      try {
+        response = await axios.get('https://www.eventbriteapi.com/v3/events/search/', {
+          headers: {
+            'Authorization': authHeader,
+          },
+          params: {
+            'location.address': `${store.city}, ${store.state}`,
+            'location.within': '25mi',
+            'expand': 'venue'
+          }
+        });
+      } catch (err) {
+        // If location search fails, try without location params
+        console.log('Eventbrite location search failed, trying general search');
+        response = await axios.get('https://www.eventbriteapi.com/v3/events/', {
+          headers: {
+            'Authorization': authHeader,
+          }
+        });
+      }
+  
       if (!response.data.events) return [];
-
-      return response.data.events.map(event => ({
-        name: event.name.text,
-        venue: event.venue?.name || 'TBD',
-        date: new Date(event.start.utc),
-        time: new Date(event.start.utc).toLocaleTimeString('en-US', { 
-          hour: '2-digit', 
-          minute: '2-digit' 
-        }),
-        capacity: event.capacity || 5000,
-        type: 'Event',
-        impact: this.calculateEventImpact(
-          event.capacity || 5000, 
-          new Date(event.start.utc)
-        ),
-        hoursUntilEvent: (new Date(event.start.utc) - new Date()) / (1000 * 60 * 60),
-        daysUntilEvent: Math.floor((new Date(event.start.utc) - new Date()) / (1000 * 60 * 60 * 24)),
-        isToday: (new Date(event.start.utc) - new Date()) / (1000 * 60 * 60) >= -12 && (new Date(event.start.utc) - new Date()) / (1000 * 60 * 60) < 24,
-        source: 'eventbrite'
-      }));
+  
+      return response.data.events
+        .filter(event => {
+          // Manual distance filtering if needed
+          const eventLat = event.venue?.latitude;
+          const eventLng = event.venue?.longitude;
+          if (eventLat && eventLng) {
+            const distance = this.calculateDistance(store.lat, store.lng, eventLat, eventLng);
+            return distance <= 25; // 25 miles
+          }
+          return true; // Include if no venue coords
+        })
+        .slice(0, 10)
+        .map(event => ({
+          name: event.name.text,
+          venue: event.venue?.name || 'TBD',
+          date: new Date(event.start.utc),
+          time: new Date(event.start.utc).toLocaleTimeString('en-US', { 
+            hour: '2-digit', 
+            minute: '2-digit' 
+          }),
+          capacity: event.capacity || 5000,
+          type: 'Event',
+          impact: this.calculateEventImpact(
+            event.capacity || 5000, 
+            new Date(event.start.utc)
+          ),
+          hoursUntilEvent: (new Date(event.start.utc) - new Date()) / (1000 * 60 * 60),
+          daysUntilEvent: Math.floor((new Date(event.start.utc) - new Date()) / (1000 * 60 * 60 * 24)),
+          isToday: (new Date(event.start.utc) - new Date()) / (1000 * 60 * 60) >= -12 && 
+                   (new Date(event.start.utc) - new Date()) / (1000 * 60 * 60) < 24,
+          source: 'eventbrite'
+        }));
     } catch (error) {
-      console.error('Eventbrite API error:', error);
+      console.error('Eventbrite API error:', error.response?.status, error.response?.data?.error_description || error.message);
       return [];
     }
   }
