@@ -12,6 +12,7 @@ class StoreIntelligenceService {
     this.config = config;
     this.lastApiCall = 0;
     this.minApiDelay = 100;
+    this.lastTicketmasterCall = 0; // Add this line
   }
 
   async generateStoreInsight(store) {
@@ -148,20 +149,28 @@ class StoreIntelligenceService {
     const cacheKey = `events_${store.id}`;
     const cached = this.getCached(cacheKey, 3600000); // 1 hour cache
     if (cached) return cached;
-
+  
     try {
       const tmApiKey = process.env.TICKETMASTER_API_KEY;
       if (!tmApiKey) return [];
-
+  
+      // Rate limit protection for Ticketmaster API
+      const now = Date.now();
+      if (this.lastTicketmasterCall && (now - this.lastTicketmasterCall) < 1000) {
+        await new Promise(resolve => setTimeout(resolve, 1000 - (now - this.lastTicketmasterCall)));
+      }
+      this.lastTicketmasterCall = Date.now();
+  
       const response = await axios.get('https://app.ticketmaster.com/discovery/v2/events.json', {
         params: {
           apikey: tmApiKey,
           latlong: `${store.lat},${store.lng}`,
-          radius: '25',
+          radius: '5',
           unit: 'miles',
           size: 10,
           sort: 'date,asc'
-        }
+        },
+        timeout: 5000 // 5 second timeout
       });
 
       if (!response.data._embedded?.events) return [];
@@ -175,7 +184,13 @@ class StoreIntelligenceService {
       return events;
       
     } catch (error) {
-      console.error('Events API error:', error);
+      if (error.response?.status === 429) {
+        console.log('Ticketmaster rate limit hit - returning empty events');
+        // Cache empty result for 5 minutes to avoid hitting rate limit
+        this.setCache(cacheKey, [], 300000);
+      } else {
+        console.error('Events API error:', error.message);
+      }
       return [];
     }
   }
@@ -518,10 +533,11 @@ Guidelines:
     };
   }
 
-  getCached(key, ttl) {
+  getCached(key, defaultTtl) {
     const cached = this.cache.get(key);
     if (!cached) return null;
     
+    const ttl = cached.ttl || defaultTtl;
     if (Date.now() - cached.timestamp > ttl) {
       this.cache.delete(key);
       return null;
@@ -530,10 +546,11 @@ Guidelines:
     return cached.data;
   }
   
-  setCache(key, data) {
+  setCache(key, data, customTtl = null) {
     this.cache.set(key, {
       data,
-      timestamp: Date.now()
+      timestamp: Date.now(),
+      ttl: customTtl
     });
   }
 
