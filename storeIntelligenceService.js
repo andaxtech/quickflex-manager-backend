@@ -151,9 +151,9 @@ calculateCarryoutOpportunity(trigger, data) {
       rain: { discount: 30, margin: 15, message: "Beat the rain! 30% off when you pick up" },
       severe: { discount: 50, margin: 15, message: "Skip the storm! 50% off all carryout orders" }
     },
-    capacity: {
-      high: { discount: 30, margin: 12, message: "Skip the wait - 30% off carryout" },
-      critical: { discount: 50, margin: 12, message: "45+ min delivery times - 50% off carryout!" }
+    staffing: {
+      multipleOpenShifts: { discount: 30, margin: 12, message: "Quick pickup special - 30% off carryout" },
+      weatherPlusStaffing: { discount: 40, margin: 12, message: "Skip the wait - 40% off carryout today!" }
     },
     slowPeriod: {
       afternoon: { discount: 20, margin: 10, message: "Afternoon special - 20% off carryout" }
@@ -166,10 +166,10 @@ calculateCarryoutOpportunity(trigger, data) {
     opportunity = { ...opportunities.weather.severe, reason: 'severe weather' };
   } else if (trigger === 'weather' && data.isRaining) {
     opportunity = { ...opportunities.weather.rain, reason: 'rain' };
-  } else if (trigger === 'capacity' && data.utilizationRate > 1) {
-    opportunity = { ...opportunities.capacity.critical, reason: 'critical capacity' };
-  } else if (trigger === 'capacity' && data.utilizationRate > 0.8) {
-    opportunity = { ...opportunities.capacity.high, reason: 'high capacity' };
+  } else if (trigger === 'staffing' && data.weatherMultiplier > 1.2 && data.openShiftsAvailable > 0) {
+    opportunity = { ...opportunities.staffing.weatherPlusStaffing, reason: 'weather impact + open shifts' };
+  } else if (trigger === 'staffing' && data.openShiftsAvailable > 2) {
+    opportunity = { ...opportunities.staffing.multipleOpenShifts, reason: 'multiple open shifts' };
   } else if (trigger === 'slowPeriod' && data.name === 'afternoon') {
     opportunity = { ...opportunities.slowPeriod.afternoon, reason: 'slow period' };
   }
@@ -748,46 +748,48 @@ await this.enforceRateLimit('google');
   }
 
 //find delivery capacity
-  async analyzeDeliveryCapacity(store, data) {
-    // Calculate current delivery capacity stress
-    const capacityAnalysis = {
-      driversAvailable: store.bookedShifts,
-      ordersPerDriverHour: 3, // Domino's standard
-      currentCapacity: store.bookedShifts * 3,
-      weatherMultiplier: 1
-    };
+async analyzeDeliveryCapacity(store, data) {
+  // We only know about ADDITIONAL drivers, not base staffing
+  const capacityAnalysis = {
+    additionalDriversProvided: store.bookedShifts || 0,
+    openShiftsAvailable: store.openShifts || 0,
+    weatherMultiplier: 1,
+    utilizationRate: null // We can't calculate this without knowing base staffing
+  };
   
-    // Adjust for weather impact
-    if (data.weather?.isRaining) {
-      capacityAnalysis.weatherMultiplier = 1.3; // 30% more orders
-    }
-    if (data.weather?.isSevere) {
-      capacityAnalysis.weatherMultiplier = 1.5; // 50% more orders
-    }
-  
-    // Estimate demand
-    const estimatedDemand = this.getBaselineDemand(store, data.context) * capacityAnalysis.weatherMultiplier;
-    capacityAnalysis.utilizationRate = estimatedDemand / capacityAnalysis.currentCapacity;
-    
-  
-    // Use unified carryout calculation
-    if (capacityAnalysis.utilizationRate > 0.8) {
-      capacityAnalysis.carryoutOpportunity = this.calculateCarryoutOpportunity('capacity', capacityAnalysis);
-    }
-  
-    return capacityAnalysis;
+  // Adjust for weather impact
+  if (data.weather?.isRaining) {
+    capacityAnalysis.weatherMultiplier = 1.3; // 30% more orders expected
   }
-  
-  getBaselineDemand(store, context) {
-    // Simple demand estimation based on time/day
-    let baseline = 20; // orders per hour
-    
-    if (context.isPeakTime) baseline *= 2;
-    if (context.isWeekend) baseline *= 1.3;
-    if (context.hour >= 11 && context.hour <= 13) baseline *= 1.5; // lunch rush
-    
-    return baseline;
+  if (data.weather?.isSevere) {
+    capacityAnalysis.weatherMultiplier = 1.5; // 50% more orders expected
   }
+
+  // Instead of calculating utilization, assess staffing needs
+  capacityAnalysis.staffingAssessment = {
+    weatherImpact: capacityAnalysis.weatherMultiplier > 1,
+    additionalDriversNeeded: capacityAnalysis.openShiftsAvailable > 0,
+    recommendation: this.getStaffingRecommendation(capacityAnalysis)
+  };
+
+  // Determine if carryout promotion is needed based on weather/events, not capacity
+  if (capacityAnalysis.weatherMultiplier > 1.2 || capacityAnalysis.openShiftsAvailable > 2) {
+    capacityAnalysis.carryoutOpportunity = this.calculateCarryoutOpportunity('staffing', capacityAnalysis);
+  }
+
+  return capacityAnalysis;
+}
+
+getStaffingRecommendation(analysis) {
+  if (analysis.openShiftsAvailable === 0) {
+    return "All additional shifts filled";
+  } else if (analysis.weatherMultiplier > 1.3) {
+    return `Fill ${analysis.openShiftsAvailable} open shifts - weather driving demand`;
+  } else if (analysis.openShiftsAvailable > 2) {
+    return "Multiple shifts available - consider carryout promotions";
+  }
+  return "Monitor and fill shifts as needed";
+}
 
 
 
@@ -1012,7 +1014,8 @@ await this.enforceRateLimit('google');
     '',
     'CARRYOUT PROMOTION NEEDED:',
     `- Weather condition: ${data.weather?.condition}`,
-    `- Delivery capacity: ${data.deliveryCapacity ? Math.round(data.deliveryCapacity.utilizationRate * 100) + '%' : 'normal'}`,
+    `- Staffing: ${data.deliveryCapacity?.additionalDriversProvided || 0} additional drivers, ${data.deliveryCapacity?.openShiftsAvailable || 0} open shifts`,
+`- Weather impact multiplier: ${data.deliveryCapacity?.weatherMultiplier || 1}x`,
     `- Action: Push carryout with aggressive discounting`
   );
 }
