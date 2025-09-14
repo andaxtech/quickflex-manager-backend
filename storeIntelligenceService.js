@@ -16,13 +16,16 @@ class StoreIntelligenceService {
 
   async generateStoreInsight(store) {
     try {
+      // Normalize store ID field
+      store.store_id = store.store_id || store.id;
+      
       // Validate required fields
       if (!store.store_id || !store.city || !store.state) {
-      console.error(`Missing required fields for store: ${store.store_id}`);
+      console.error(`Missing required fields for store: ${store.store_id || store.id}`);
       return this.getFallbackInsight(store);
     }
       if (!store.store_latitude || !store.store_longitude) {
-        console.warn(`Store ${store.store_id} missing coordinates`);
+        console.warn(`Store ${store.store_id || store.id} missing coordinates`);
         return this.getFallbackInsight(store);
       }
 
@@ -58,7 +61,7 @@ class StoreIntelligenceService {
   }
 
   async classifyStore(store) {
-    const dbClassification = await this.getStoreClassification(store.store_id);
+    const dbClassification = await this.getStoreClassification(store.store_id || store.id);
     if (dbClassification) return dbClassification;
 
     const militaryBases = this.config.locations.militaryBases[store.state] || [];
@@ -73,7 +76,7 @@ class StoreIntelligenceService {
       };
       
       // Save to database
-      await this.saveStoreClassification(store.store_id, classification);
+      await this.saveStoreClassification(store.store_id || store.id, classification);
       
       return classification;
     }
@@ -87,7 +90,7 @@ class StoreIntelligenceService {
       };
       
       // Save to database
-      await this.saveStoreClassification(store.store_id, classification);
+      await this.saveStoreClassification(store.store_id || store.id, classification);
       
       return classification;
     }
@@ -99,7 +102,7 @@ class StoreIntelligenceService {
     };
 
     // Save to database
-    await this.saveStoreClassification(store.store_id, classification);
+    await this.saveStoreClassification(store.store_id || store.id, classification);
 
     return classification;
   }
@@ -172,7 +175,7 @@ class StoreIntelligenceService {
   }
 
   async getTrafficData(store) {
-    const cacheKey = `traffic_${store.store_id}`;
+    const cacheKey = `traffic_${store.store_id || store.id}`;
     const cached = this.getCached(cacheKey, this.config.cache.traffic);
     if (cached) return cached;
 
@@ -252,7 +255,7 @@ class StoreIntelligenceService {
   }
 
   async getLocalEvents(store) {
-    const cacheKey = `events_${store.store_id}`;
+    const cacheKey = `events_${store.store_id || store.id}`;
     const cached = this.getCached(cacheKey, this.config.cache.events || 3600000);
     if (cached) return cached;
 
@@ -354,7 +357,7 @@ class StoreIntelligenceService {
   async buildIntelligencePrompt(store, data) {
     const now = new Date();
     const localTime = this.getStoreLocalTime(store);
-    const baselines = await this.getStoreBaselines(store.store_id);
+    const baselines = await this.getStoreBaselines(store.store_id || store.id);
     
     // Parse local time more clearly
     const localDate = new Date(localTime);
@@ -367,7 +370,7 @@ class StoreIntelligenceService {
     
     // Build a focused, clear prompt
     const prompt = [
-      `Generate ONE actionable insight for Domino's store ${store.store_id}.`,
+      `Generate ONE actionable insight for Domino's store ${store.store_id || store.id}.`,
       ``,
       `CURRENT SITUATION:`,
       `- Location: ${store.city}, ${store.region || store.state}`,
@@ -496,7 +499,7 @@ class StoreIntelligenceService {
   async generateAIInsight(store, data) {
     const prompt = await this.buildIntelligencePrompt(store, data);
     
-    console.log(`\n=== AI PROMPT for Store ${store.store_id} ===`);
+    console.log(`\n=== AI PROMPT for Store ${store.store_id || store.id} ===`);
     console.log(prompt);
     console.log('=== END PROMPT ===\n');
     
@@ -533,7 +536,7 @@ class StoreIntelligenceService {
       // Validate and clean the response
       const validatedResponse = this.validateAIResponse(aiResponse);
       
-      console.log(`\n=== AI RESPONSE for Store ${store.store_id} ===`);
+      console.log(`\n=== AI RESPONSE for Store ${store.store_id || store.id} ===`);
       console.log(JSON.stringify(validatedResponse, null, 2));
       console.log('=== END RESPONSE ===\n');
       
@@ -721,7 +724,7 @@ class StoreIntelligenceService {
     const batchResults = await Promise.all(
       batch.map(store => 
         this.generateStoreInsight(store).catch(err => {
-          console.error(`Failed for store ${store.store_id}:`, err);
+          console.error(`Failed for store ${store.store_id || store.id}:`, err);
           return this.getFallbackInsight(store);
         })
       )
