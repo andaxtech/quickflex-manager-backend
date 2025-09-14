@@ -325,7 +325,7 @@ class StoreIntelligenceService {
     }
   }
 
-  buildIntelligencePrompt(store, data) {
+  async buildIntelligencePrompt(store, data) {
     const now = new Date();
     const localTime = this.getStoreLocalTime(store);
     const baselines = await this.getStoreBaselines(store.store_id);
