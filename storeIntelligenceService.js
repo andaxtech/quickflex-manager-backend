@@ -509,9 +509,12 @@ Guidelines:
       metrics: {
         expectedOrderIncrease: 0,
         recommendedExtraDrivers: 0,
+        peakHours: null,
         primaryReason: "normal conditions"
       },
-      action: "Monitor orders and adjust as needed"
+      action: "Monitor orders and adjust as needed",
+      todayActions: "Follow standard operating procedures",
+      weekOutlook: "Normal patterns expected this week"
     };
   }
 
