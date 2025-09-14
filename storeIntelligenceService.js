@@ -226,7 +226,7 @@ calculateCarryoutOpportunity(trigger, data) {
     return 'light';
   }
 
-  async getEventData(store) {
+  async getTicketmasterEvents(store) {
     const cacheKey = `events_${store.id}`;
     const cached = this.getCached(cacheKey, 3600000); // 1 hour cache
     if (cached) return cached;
@@ -296,6 +296,196 @@ calculateCarryoutOpportunity(trigger, data) {
       } else {
         console.error('Events API error:', error.message);
       }
+      return [];
+    }
+  }
+
+  async getEventData(store) {
+    const cacheKey = `events_${store.id}`;
+    const cached = this.getCached(cacheKey, 3600000); // 1 hour cache
+    if (cached) return cached;
+
+    console.log(`🎪 Fetching events from multiple sources for store ${store.id}...`);
+
+    // Fetch from all sources in parallel
+    const [ticketmaster, seatgeek, eventbrite, googlePlaces] = await Promise.allSettled([
+      this.getTicketmasterEvents(store),
+      this.getSeatGeekEvents(store),
+      this.getEventbriteEvents(store),
+      this.getGooglePlacesEvents(store)
+    ]);
+
+    // Combine results
+    const allEvents = [
+      ...(ticketmaster.status === 'fulfilled' ? ticketmaster.value : []),
+      ...(seatgeek.status === 'fulfilled' ? seatgeek.value : []),
+      ...(eventbrite.status === 'fulfilled' ? eventbrite.value : []),
+      ...(googlePlaces.status === 'fulfilled' ? googlePlaces.value : [])
+    ];
+
+    console.log(`📊 Event sources summary:
+      - Ticketmaster: ${ticketmaster.status === 'fulfilled' ? ticketmaster.value.length : 'failed'}
+      - SeatGeek: ${seatgeek.status === 'fulfilled' ? seatgeek.value.length : 'failed'}
+      - Eventbrite: ${eventbrite.status === 'fulfilled' ? eventbrite.value.length : 'failed'}
+      - Google Places: ${googlePlaces.status === 'fulfilled' ? googlePlaces.value.length : 'failed'}
+      - Total: ${allEvents.length} events found`);
+
+    // Deduplicate events
+    const uniqueEvents = this.deduplicateEvents(allEvents);
+    
+    // Sort by date and filter
+    const finalEvents = uniqueEvents
+      .sort((a, b) => a.date - b.date)
+      .filter(event => event.impact >= 0.3 || event.isToday)
+      .slice(0, 10);
+
+    this.setCache(cacheKey, finalEvents);
+    return finalEvents;
+  }
+
+  deduplicateEvents(events) {
+    const seen = new Map();
+    return events.filter(event => {
+      // Create a key based on venue, date, and similar time
+      const dateKey = event.date.toDateString();
+      const hourKey = Math.floor(event.date.getHours() / 2) * 2; // Group by 2-hour blocks
+      const key = `${event.venue.toLowerCase()}-${dateKey}-${hourKey}`;
+      
+      if (seen.has(key)) {
+        // Keep the one with more details
+        const existing = seen.get(key);
+        if (event.capacity > existing.capacity) {
+          seen.set(key, event);
+        }
+        return false;
+      }
+      
+      seen.set(key, event);
+      return true;
+    });
+  }
+
+  async getSeatGeekEvents(store) {
+    try {
+      const sgClientId = process.env.SEATGEEK_CLIENT_ID;
+      if (!sgClientId) return [];
+
+      const response = await axios.get('https://api.seatgeek.com/2/events', {
+        params: {
+          client_id: sgClientId,
+          lat: store.lat,
+          lon: store.lng,
+          range: '25mi',
+          per_page: 20,
+          type: 'concert,sports,theater',
+          datetime_utc: {
+            gte: new Date().toISOString().split('T')[0]
+          }
+        }
+      });
+
+      if (!response.data.events) return [];
+
+      return response.data.events.map(event => ({
+        name: event.title,
+        venue: event.venue.name,
+        date: new Date(event.datetime_utc),
+        time: new Date(event.datetime_utc).toLocaleTimeString('en-US', { 
+          hour: '2-digit', 
+          minute: '2-digit' 
+        }),
+        capacity: event.venue.capacity || 5000,
+        type: event.type,
+        impact: this.calculateEventImpact(
+          event.venue.capacity || 5000, 
+          new Date(event.datetime_utc)
+        ),
+        hoursUntilEvent: (new Date(event.datetime_utc) - new Date()) / (1000 * 60 * 60),
+        daysUntilEvent: Math.floor((new Date(event.datetime_utc) - new Date()) / (1000 * 60 * 60 * 24)),
+        isToday: (new Date(event.datetime_utc) - new Date()) / (1000 * 60 * 60) >= -12 && (new Date(event.datetime_utc) - new Date()) / (1000 * 60 * 60) < 24,
+        source: 'seatgeek'
+      }));
+    } catch (error) {
+      console.error('SeatGeek API error:', error);
+      return [];
+    }
+  }
+
+  async getEventbriteEvents(store) {
+    try {
+      const ebToken = process.env.EVENTBRITE_TOKEN;
+      if (!ebToken) return [];
+
+      const response = await axios.get('https://www.eventbriteapi.com/v3/events/search/', {
+        headers: {
+          'Authorization': `Bearer ${ebToken}`
+        },
+        params: {
+          'location.latitude': store.lat,
+          'location.longitude': store.lng,
+          'location.within': '25mi',
+          'start_date.range_start': new Date().toISOString(),
+          'start_date.range_end': new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString()
+        }
+      });
+
+      if (!response.data.events) return [];
+
+      return response.data.events.map(event => ({
+        name: event.name.text,
+        venue: event.venue?.name || 'TBD',
+        date: new Date(event.start.utc),
+        time: new Date(event.start.utc).toLocaleTimeString('en-US', { 
+          hour: '2-digit', 
+          minute: '2-digit' 
+        }),
+        capacity: event.capacity || 5000,
+        type: 'Event',
+        impact: this.calculateEventImpact(
+          event.capacity || 5000, 
+          new Date(event.start.utc)
+        ),
+        hoursUntilEvent: (new Date(event.start.utc) - new Date()) / (1000 * 60 * 60),
+        daysUntilEvent: Math.floor((new Date(event.start.utc) - new Date()) / (1000 * 60 * 60 * 24)),
+        isToday: (new Date(event.start.utc) - new Date()) / (1000 * 60 * 60) >= -12 && (new Date(event.start.utc) - new Date()) / (1000 * 60 * 60) < 24,
+        source: 'eventbrite'
+      }));
+    } catch (error) {
+      console.error('Eventbrite API error:', error);
+      return [];
+    }
+  }
+
+  async getGooglePlacesEvents(store) {
+    try {
+      const response = await axios.get('https://maps.googleapis.com/maps/api/place/nearbysearch/json', {
+        params: {
+          location: `${store.lat},${store.lng}`,
+          radius: 40000,
+          type: 'stadium',
+          key: this.googleMapsKey
+        }
+      });
+  
+      if (!response.data.results) return [];
+  
+      const venues = response.data.results.slice(0, 5).map(place => ({
+        name: `Event at ${place.name}`,
+        venue: place.name,
+        date: new Date(),
+        time: 'Various',
+        capacity: place.user_ratings_total ? place.user_ratings_total * 10 : 5000,
+        type: 'Venue Activity',
+        impact: 0.5,
+        hoursUntilEvent: 0,
+        daysUntilEvent: 0,
+        isToday: true,
+        source: 'google_places'
+      }));
+  
+      return venues;
+    } catch (error) {
+      console.error('Google Places error:', error);
       return [];
     }
   }
@@ -576,7 +766,12 @@ await this.enforceRateLimit('google');
       return { hasActivePromos: false, competitors: [] };
     }
   }
+
+
   
+
+
+
   async getDaysSinceLastHoliday(date) {
     const year = date.getFullYear();
     
