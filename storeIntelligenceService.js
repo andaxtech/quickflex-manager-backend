@@ -369,12 +369,19 @@ return classification;
     const baselines = await this.getStoreBaselines(store.store_id);
     
     let eventsSummary = 'No major events';
-    if (data.events && data.events.length > 0) {
-      const eventDescriptions = data.events.map(e => {
-        return `${e.date}: ${e.name} at ${e.venue} (${e.type})`;
-      });
-      eventsSummary = eventDescriptions.join('; ');
-    }
+let eventDetails = [];
+if (data.events && data.events.length > 0) {
+  eventDetails = data.events.map(e => {
+    const dateObj = new Date(e.date);
+    const dayName = dateObj.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+    return {
+      description: `${dayName}: ${e.name} at ${e.venue} (${e.type})`,
+      impact: e.impact,
+      capacity: e.capacity
+    };
+  });
+  eventsSummary = eventDetails.map(e => e.description).join('; ');
+}
     
     const promptParts = [
       `You are Domino's Store Mentor. Generate ONE actionable insight for store ${store.store_id}.`,
@@ -392,6 +399,13 @@ return classification;
       `- Holidays (next 7 days): ${data.holidays?.slice(0,3).map(h => h.name).join(', ') || 'none'}`,
       `- Local Events: ${eventsSummary}`,
       ''
+      ];
+
+      // Add specific traffic alert if significant delays
+      if (data.traffic && data.traffic.delayMinutes > 10) {
+        promptParts.push(`- Traffic Alert: Major delays on nearby routes (${data.traffic.delayMinutes} min)`);
+        promptParts.push('');
+      }
     ];
 
     if (data.events && data.events.length > 0) {
@@ -405,8 +419,24 @@ return classification;
     promptParts.push(`- Min delivery: $${baselines.minOrder}`);
     promptParts.push('');
     promptParts.push('Return JSON with:');
-    promptParts.push('{');
-    promptParts.push('  "insight": "specific action for NOW (max 100 chars)",');
+promptParts.push('{');
+promptParts.push('  "insight": "specific action for NOW - MUST include event name/reason (max 100 chars)",');
+promptParts.push('  "severity": "info|warning|critical",');
+promptParts.push('  "metrics": {');
+promptParts.push('    "expectedOrderIncrease": percentage,');
+promptParts.push('    "recommendedExtraDrivers": number,');
+promptParts.push('    "peakHours": "17-20" or null,');
+promptParts.push('    "primaryReason": "specific cause (e.g., Lakers game, I-405 accident, Veterans Day)"');
+promptParts.push('  },');
+promptParts.push('  "todayActions": "what to do TODAY with specific reason (max 80 chars)",');
+promptParts.push('  "weekOutlook": "5-day forecast with SPECIFIC events/dates mentioned (max 100 chars)"');
+promptParts.push('}');
+promptParts.push('');
+promptParts.push('REQUIREMENTS:');
+promptParts.push('- Always mention specific event names (e.g., "Taylor Swift at SoFi Stadium")');
+promptParts.push('- Include specific roads for traffic (e.g., "I-405 accident causing 45min delays")');
+promptParts.push('- Name specific holidays or dates (e.g., "Veterans Day surge on Nov 11")');
+promptParts.push('- Never be vague - managers need verifiable details');
     promptParts.push('  "severity": "info|warning|critical",');
     promptParts.push('  "metrics": {');
     promptParts.push('    "expectedOrderIncrease": percentage,');
