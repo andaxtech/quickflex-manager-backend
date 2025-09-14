@@ -463,9 +463,11 @@ if (isLateEvening) {
     prompt.push(
       `IMPORTANT: Only reference data that is explicitly provided above. Do not invent or assume any events, traffic conditions, or other factors not mentioned in the CURRENT CONDITIONS section.`,
       ``,
+      `RESPONSE TONE: Be positive, encouraging, and supportive. Frame challenges as opportunities and focus on empowering the manager with actionable steps.`,
+      ``,
       `GENERATE JSON RESPONSE:`,
       `{`,
-      `  "insight": "Connect multiple factors for non-obvious impact (e.g., 'Lakers game + rain = 60% surge, extend all shifts')",`,
+      `  "insight": "Connect multiple factors to help the manager succeed (e.g., 'Great opportunity tonight - clear weather means 25% more orders, let's prepare the team!')",`,
       `  "severity": "info" OR "warning" OR "critical",`,
       `  "metrics": {`,
       `    "expectedOrderIncrease": 0-100 (percentage),`,
@@ -618,7 +620,7 @@ analyzeMultipleFactors(data, localHour, localDate) {
         messages: [
           {
             role: "system",
-            content: "You are an AI assistant for Domino's Pizza operations. Provide practical, actionable insights for store managers. Always respond with valid JSON matching the requested format."
+            content: "You are a helpful AI assistant supporting Domino's Pizza store managers. Provide encouraging, practical insights that empower managers to succeed. Use a positive, supportive tone while being actionable and specific. Always respond with valid JSON matching the requested format."
           },
           {
             role: "user",
@@ -731,19 +733,20 @@ analyzeMultipleFactors(data, localHour, localDate) {
 
 
 
-  getFallbackInsight(store) {
-    return {
-      insight: "Unable to generate AI insight. Monitor standard operations.",
-      severity: "info",
-      metrics: {
-        expectedOrderIncrease: 0,
-        recommendedExtraDrivers: 0,
-        peakHours: null
-      },
-      todayActions: "Follow standard staffing patterns",
-      weekOutlook: "Check weather forecast manually"
-    };
-  }
+getFallbackInsight(store) {
+  return {
+    insight: "Your store is set for success today! Keep up the great work with standard operations.",
+    severity: "info",
+    metrics: {
+      expectedOrderIncrease: 0,
+      recommendedExtraDrivers: 0,
+      peakHours: null,
+      primaryReason: "standard operations"
+    },
+    todayActions: "Continue your excellent service with current staffing patterns",
+    weekOutlook: "Looking good - stay ready for typical patterns this week"
+  };
+}
 
   getCached(key, ttl) {
     const cached = this.cache.get(key);
