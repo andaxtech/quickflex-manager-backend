@@ -294,31 +294,20 @@ class StoreIntelligenceService {
       }
 
       const events = response.data._embedded.events
-      .map(event => ({
-        name: event.name,
-        date: event.dates.start.localDate,
-        time: event.dates.start.localTime,
-        venue: event._embedded?.venues?.[0]?.name || 'Unknown venue',
-        capacity: event._embedded?.venues?.[0]?.boxOfficeInfo?.generalInfo || null,
-        distance: event._embedded?.venues?.[0]?.distance || null,
-        type: event.classifications?.[0]?.segment?.name || 'Event',
-        impact: this.calculateEventImpact(event)
-      }))
-      .filter(event => event.impact > 0.3)
-      .slice(0, 5);
+  .map(event => ({
+    name: event.name,
+    date: event.dates.start.localDate,
+    time: event.dates.start.localTime,
+    venue: event._embedded?.venues?.[0]?.name || 'Unknown venue',
+    capacity: event._embedded?.venues?.[0]?.boxOfficeInfo?.generalInfo || null,
+    distance: event._embedded?.venues?.[0]?.distance || null,
+    type: event.classifications?.[0]?.segment?.name || 'Event',
+    impact: this.calculateEventImpact(event)
+  }))
+  .filter(event => event.impact > 0.3)
+  .slice(0, 5);
 
-    console.log(`Found ${events.length} events for store ${store.store_id || store.id}:`, events);
-          name: event.name,
-          date: event.dates.start.localDate,
-          time: event.dates.start.localTime,
-          venue: event._embedded?.venues?.[0]?.name || 'Unknown venue',
-          capacity: event._embedded?.venues?.[0]?.boxOfficeInfo?.generalInfo || null,
-          distance: event._embedded?.venues?.[0]?.distance || null,
-          type: event.classifications?.[0]?.segment?.name || 'Event',
-          impact: this.calculateEventImpact(event)
-        }))
-        .filter(event => event.impact > 0.3)
-        .slice(0, 5);
+console.log(`Found ${events.length} events for store ${store.store_id || store.id}:`, events);
 
       this.setCache(cacheKey, events);
       return events;
