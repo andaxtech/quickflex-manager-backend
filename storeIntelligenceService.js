@@ -245,18 +245,45 @@ calculateCarryoutOpportunity(trigger, data) {
           latlong: `${store.lat},${store.lng}`,
           radius: '25',
           unit: 'miles',
-          size: 10,
-          sort: 'date,asc'
+          size: 20,  // Increased from 10
+          sort: 'date,asc',
+          startDateTime: new Date().toISOString(),
+          endDateTime: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString()
         },
-        timeout: 5000 // 5 second timeout
+        timeout: 5000
+      });
+      
+      // Debug logging
+      console.log(`🎫 Events API for store ${store.id} (${store.city}):`, {
+        totalFound: response.data.page?.totalElements || 0,
+        returned: response.data._embedded?.events?.length || 0
+      });
+      
+      if (!response.data._embedded?.events) return [];
+      
+      // Log all events before filtering
+      response.data._embedded.events.forEach(event => {
+        const eventDate = new Date(event.dates.start.dateTime);
+        console.log(`  - ${event.name} | ${eventDate.toLocaleDateString()} | Venue: ${event._embedded?.venues?.[0]?.name}`);
       });
 
-      if (!response.data._embedded?.events) return [];
+      const processedEvents = response.data._embedded.events
+  .map(event => this.processEvent(event));
 
-      const events = response.data._embedded.events
-      .map(event => this.processEvent(event))
-      .filter(event => event.impact >= 0.5)
-      .slice(0, 3);
+      // Log impact scores
+      console.log('📊 Event impact scores:');
+      processedEvents.forEach(e => {
+        console.log(`  - ${e.name}: impact=${e.impact.toFixed(2)}, capacity=${e.capacity}, isToday=${e.isToday}`);
+      });
+
+      const events = processedEvents
+        .filter(event => {
+          // Lower threshold to catch more events
+          return event.impact >= 0.3 || event.isToday;
+        })
+        .slice(0, 10); // Show more events
+
+      console.log(`✅ Filtered to ${events.length} relevant events`);
 
       this.setCache(cacheKey, events);
       return events;
@@ -280,19 +307,24 @@ calculateCarryoutOpportunity(trigger, data) {
     
     const now = new Date();
     const hoursUntilEvent = (eventDate - now) / (1000 * 60 * 60);
-    const daysUntilEvent = Math.floor(hoursUntilEvent / 24);
+      const daysUntilEvent = Math.floor(hoursUntilEvent / 24);
 
-    const eventData = {
-      name: event.name,
-      venue: venue?.name || 'Unknown',
-      date: eventDate,
-      time: eventDate.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
-      capacity,
-      type: event.classifications?.[0]?.segment?.name || 'Event',
-      impact: this.calculateEventImpact(capacity, eventDate),
-      hoursUntilEvent,
-      daysUntilEvent
-    };
+      // Include today's events (negative hours mean event has passed today)
+      const isToday = hoursUntilEvent >= -12 && hoursUntilEvent < 24;
+
+      const eventData = {
+        name: event.name,
+        venue: venue?.name || 'Unknown',
+        date: eventDate,
+        time: eventDate.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
+        capacity,
+        type: event.classifications?.[0]?.segment?.name || 'Event',
+        impact: this.calculateEventImpact(capacity, eventDate),
+        hoursUntilEvent,
+        daysUntilEvent,
+        isToday,
+        isPastToday: hoursUntilEvent < 0 && hoursUntilEvent >= -12
+      };
 
     // Add pre-order opportunity for events 2-7 days out
     eventData.preOrderOpportunity = this.createPreOrderOpportunity(eventData);
@@ -1037,8 +1069,11 @@ if (preOrderEvents.length > 0) {
 
 prompt.push(
   '',
+  'IMPORTANT: Only suggest carryout promotions for: rain, severe weather, snow, or high traffic delays.',
+  'Do NOT suggest promotions for: haze, clouds, mist, or other mild weather conditions.',
+  '',
   'Generate a JSON response with:',
-  '- insight: One specific, actionable recommendation that MUST mention the specific reason (e.g. "Mist causing delays - push 30% off carryout", "Lakers game at 7pm - add 2 drivers") (max 100 chars)',
+  '- insight: One specific, actionable recommendation based on actual business impact (max 100 chars)',
   '- severity: "info", "warning", or "critical"',
   '- metrics: {',
   '    expectedOrderIncrease: 0-100 percentage',
@@ -1132,15 +1167,19 @@ if (eventsWithPreOrder.length > 0) {
 
   getSystemPrompt() {
     return `You are an AI assistant for Domino's Pizza store managers. 
-Your role is to provide clear, actionable insights based on current conditions.
-
-Guidelines:
-- Be specific and practical
-- Focus on immediate actions the manager can take
-- Use encouraging, supportive language
-- Keep recommendations realistic
-- Base all insights on the provided data only
-- Respond with valid JSON only`;
+  Your role is to provide clear, actionable insights based on current conditions.
+  
+  Guidelines:
+  - Be specific and practical
+  - Focus on immediate actions the manager can take
+  - Keep recommendations realistic and conservative
+  - Base all insights on the provided data only
+  - For Sunday afternoons heading into slow periods, expect ORDER DECREASES not increases
+  - Only predict order increases when there's rain, major events, or holidays
+  - Mild weather conditions (haze, clouds) do NOT drive order increases
+  - Only suggest discount percentages that are explicitly provided in the data
+  - If no carryout opportunity is provided, do not make up discount amounts
+  - Respond with valid JSON only`;
   }
 
   validateResponse(response) {
