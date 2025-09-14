@@ -394,11 +394,12 @@ class StoreIntelligenceService {
     
     const promptParts = [
       `You are Domino's Store Mentor. Generate ONE actionable insight for store ${store.store_id}.`,
+      `CRITICAL: Use ACTION VERBS only - tell managers exactly WHAT to do, not what to expect.`,
       '',
       'Store Context:',
       `- Location: ${store.city}, ${store.region || store.state}`,
       `- Type: ${data.storeType.type}`,
-      `- Local Time: ${localTime}`,
+      `- Local Time: ${localTime} (THIS IS CRITICAL - base all "today" actions on this time)`,
       `- Current Date: ${new Date().toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })}`,
       `- Open Shifts: ${store.shifts?.open || 0}`,
       `- Booked Shifts: ${store.shifts?.booked || 0}`,
