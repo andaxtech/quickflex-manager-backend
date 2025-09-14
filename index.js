@@ -923,15 +923,18 @@ intelligence = await intelligenceService.generateStoreInsight({
     
     return {
       ...store,
-      weather: weather || {
+      weather: weather ? {
+        temperature: weather.temperature,
+        condition: weather.condition,
+        icon: weather.icon
+        // DO NOT include insight, severity, metrics, etc. here
+      } : {
         temperature: 0,
         condition: 'Unknown',
-        high: 0,
-        low: 0,
-        alert: undefined
+        icon: undefined
       },
       shifts: shiftResults[index] || { open: 0, booked: 0 },
-      intelligence: intelligence // New field
+      intelligence: intelligence
     };
   })
 );

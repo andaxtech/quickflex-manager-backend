@@ -444,11 +444,11 @@ isSlowPeriod: this.isSlowPeriod(localTime.getHours(), localTime.getDay())
       }
   
       // Pattern 3: Check competitor activity via web search
-      const competitorPromos = await this.checkCompetitorPromotions(store);
-      if (competitorPromos.hasActivePromos) {
-        boostWeekIndicators.confidence += 20;
-        boostWeekIndicators.reasons.push('Competitors running promotions');
-      }
+      //const competitorPromos = await this.checkCompetitorPromotions(store);
+      //if (competitorPromos.hasActivePromos) {
+        //boostWeekIndicators.confidence += 20;
+        //boostWeekIndicators.reasons.push('Competitors running promotions');
+      //}
   
       // Pattern 4: Day of week - Boost weeks typically run Tue-Thu
       const dayOfWeek = now.getDay();
@@ -1008,16 +1008,16 @@ if (preOrderEvents.length > 0) {
 prompt.push(
   '',
   'Generate a JSON response with:',
-  '- insight: One specific, actionable recommendation (max 100 chars)',
+  '- insight: One specific, actionable recommendation that MUST mention the specific reason (e.g. "Mist causing delays - push 30% off carryout", "Lakers game at 7pm - add 2 drivers") (max 100 chars)',
   '- severity: "info", "warning", or "critical"',
   '- metrics: {',
   '    expectedOrderIncrease: 0-100 percentage',
   '    recommendedExtraDrivers: 0-10',
-  '    primaryReason: main factor driving this recommendation',
+  '    primaryReason: MUST include specific details like "Mist at 70°F affecting visibility" or "Lakers vs Warriors game at 7pm with 20,000 attendees"',
   '    carryoutPotential: percentage of orders to redirect to carryout',
   '    preOrderTarget: number of pre-orders to target',
   '  }',
-  '- action: What to do RIGHT NOW (max 80 chars)',
+  '- action: What to do RIGHT NOW with specific reason mentioned (e.g. "Post mist warning + carryout deal on social", "Staff up by 5pm for 7pm Lakers game") (max 80 chars)',
   '- carryoutPromotion: specific carryout offer if applicable',
   '- preOrderCampaign: specific pre-order action if applicable'
 );
