@@ -347,6 +347,10 @@ return classification;
   async generateAIInsight(store, data) {
     const prompt = await this.buildIntelligencePrompt(store, data);
     
+    console.log(`\n=== AI PROMPT for Store ${store.store_id} ===`);
+    console.log(prompt);
+    console.log('=== END PROMPT ===\n');
+    
     try {
       const completion = await this.openai.chat.completions.create({
         model: this.config.ai.model,
@@ -355,8 +359,13 @@ return classification;
         max_tokens: this.config.ai.maxTokens,
         response_format: { type: "json_object" }
       });
-
-      return JSON.parse(completion.choices[0].message.content);
+  
+      const aiResponse = JSON.parse(completion.choices[0].message.content);
+      console.log(`\n=== AI RESPONSE for Store ${store.store_id} ===`);
+      console.log(JSON.stringify(aiResponse, null, 2));
+      console.log('=== END RESPONSE ===\n');
+      
+      return aiResponse;
     } catch (error) {
       console.error('OpenAI API error:', error);
       return this.getFallbackInsight(store);
