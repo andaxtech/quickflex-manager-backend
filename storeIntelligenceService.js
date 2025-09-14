@@ -146,9 +146,9 @@ class StoreIntelligenceService {
       // Calculate destination based on configured distance
       const kmToDegrees = this.config.traffic.sampleDistanceKm / 111; // rough conversion
       
-      const url = 'https://maps.googleapis.com/maps/api/directions/json';
-const response = await axios.get(url, {
-  params: {
+      const response = await axios.get(
+        'https://maps.googleapis.com/maps/api/directions/json', {
+          params: {
             origin: `${store.store_latitude},${store.store_longitude}`,
             destination: `${store.store_latitude + kmToDegrees},${store.store_longitude + kmToDegrees}`,
             mode: 'driving',
