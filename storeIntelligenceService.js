@@ -1203,10 +1203,16 @@ getStaffingRecommendation(analysis) {
     }
     
     if (data.events.length > 0) {
-      const eventSummary = data.events
-        .map(e => `${e.name} at ${e.time}`)
-        .join(', ');
-      prompt.push(`- Events: ${eventSummary}`);
+      prompt.push(`- Events (${data.events.length} total):`);
+      data.events.slice(0, 5).forEach(event => {
+        prompt.push(`  * ${event.name} @ ${event.venue} - ${event.time} (${event.capacity} people, impact: ${event.impact})`);
+      });
+      
+      // Calculate total event impact
+      const totalCapacity = data.events.reduce((sum, e) => sum + e.capacity, 0);
+      const highImpactEvents = data.events.filter(e => e.impact > 0.7).length;
+      prompt.push(`- Total event capacity: ${totalCapacity} people`);
+      prompt.push(`- High impact events: ${highImpactEvents}`);
     }
     
     if (factors.length > 0) {
@@ -1369,8 +1375,11 @@ if (eventsWithPreOrder.length > 0) {
   - Focus on immediate actions the manager can take
   - Keep recommendations realistic and conservative
   - Base all insights on the provided data only
-  - For Sunday afternoons heading into slow periods, expect ORDER DECREASES not increases
-  - Only predict order increases when there's rain, major events, or holidays
+  '- CRITICAL: Each event with 5000+ capacity typically drives 2-3% order increase',
+'- Multiple events compound: 2 events = 5% increase, 3+ events = 8-10% increase',
+'- High impact events (>0.7) during dinner hours can drive 15-20% increases',
+'- Even on slow Sundays, events override typical patterns',
+'- BE SPECIFIC: Name the biggest event and expected order impact',
   - Mild weather conditions (haze, clouds) do NOT drive order increases
   - Only suggest discount percentages that are explicitly provided in the data
   - If no carryout opportunity is provided, do not make up discount amounts
