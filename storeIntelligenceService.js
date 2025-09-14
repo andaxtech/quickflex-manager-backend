@@ -59,47 +59,98 @@ class StoreIntelligenceService {
 
     const nearbyBase = this.findNearbyLocation(store, militaryBases);
     if (nearbyBase) {
-      return {
+      const classification = {
         type: 'military',
         subType: nearbyBase.name,
         patterns: await this.getPatternsByType('military')
       };
+      
+      // Save to database
+      await this.saveStoreClassification(store.store_id, classification);
+      
+      return classification;
     }
 
     const nearbyCollege = this.findNearbyLocation(store, colleges);
-    if (nearbyCollege) {
-      return {
-        type: 'college',
-        subType: nearbyCollege.name,
-        patterns: await this.getPatternsByType('college')
-      };
-    }
+if (nearbyCollege) {
+  const classification = {
+    type: 'college',
+    subType: nearbyCollege.name,
+    patterns: await this.getPatternsByType('college')
+  };
+  
+  // Save to database
+  await this.saveStoreClassification(store.store_id, classification);
+  
+  return classification;
+}
 
-    return {
-      type: 'suburban',
-      subType: 'standard',
-      patterns: await this.getPatternsByType('suburban')
-    };
+const classification = {
+  type: 'suburban',
+  subType: 'standard',
+  patterns: await this.getPatternsByType('suburban')
+};
+
+// Save to database
+await this.saveStoreClassification(store.store_id, classification);
+
+return classification;
   }
 
   async getStoreClassification(storeId) {
     try {
-      const query = 'SELECT store_type, sub_type FROM store_classifications WHERE store_id = $1';
-      const result = await this.dbPool.query(query, [storeId]);
+      // Check metadata field first for override
+      const result = await this.dbPool.query(
+        'SELECT metadata FROM locations WHERE store_id = $1',
+        [storeId]
+      );
       
-      if (result.rows.length > 0) {
-        const row = result.rows[0];
-        return {
-          type: row.store_type,
-          subType: row.sub_type,
-          patterns: await this.getPatternsByType(row.store_type)
-        };
+      if (result.rows.length > 0 && result.rows[0].metadata) {
+        const metadata = result.rows[0].metadata;
+        if (metadata.store_type) {
+          return {
+            type: metadata.store_type,
+            subType: metadata.sub_type || null,
+            patterns: await this.getPatternsByType(metadata.store_type)
+          };
+        }
       }
     } catch (error) {
-      console.error('Error fetching store classification:', error);
+      console.error('Error checking metadata:', error);
     }
+    
+    // Fallback to proximity detection
     return null;
   }
+
+
+  async saveStoreClassification(storeId, classification) {
+    try {
+      const updateQuery = `
+        UPDATE locations 
+        SET metadata = COALESCE(metadata, '{}'::jsonb) || $2::jsonb
+        WHERE store_id = $1
+      `;
+      
+      const metadataUpdate = {
+        store_type: classification.type,
+        sub_type: classification.subType,
+        classification_date: new Date().toISOString(),
+        classification_method: 'proximity_detection'
+      };
+      
+      await this.dbPool.query(updateQuery, [storeId, JSON.stringify(metadataUpdate)]);
+      console.log(`Saved classification for store ${storeId}: ${classification.type}`);
+    } catch (error) {
+      console.error('Error saving store classification:', error);
+    }
+  }
+
+
+
+
+
+
 
   async getPatternsByType(type) {
     const patterns = {
