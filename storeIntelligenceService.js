@@ -37,6 +37,8 @@ class StoreIntelligenceService {
       ];
 
       const results = await Promise.allSettled(dataPromises);
+      console.log(`Store ${store.store_id}: Events result:`, results[3]);
+
 
       const collectedData = {
         weather: results[0].status === 'fulfilled' ? results[0].value : null,
@@ -256,6 +258,7 @@ class StoreIntelligenceService {
 
   async getLocalEvents(store) {
     const cacheKey = `events_${store.store_id || store.id}`;
+    console.log(`Fetching events for store ${store.store_id || store.id}`);
     const cached = this.getCached(cacheKey, this.config.cache.events || 3600000);
     if (cached) return cached;
 
@@ -291,7 +294,20 @@ class StoreIntelligenceService {
       }
 
       const events = response.data._embedded.events
-        .map(event => ({
+      .map(event => ({
+        name: event.name,
+        date: event.dates.start.localDate,
+        time: event.dates.start.localTime,
+        venue: event._embedded?.venues?.[0]?.name || 'Unknown venue',
+        capacity: event._embedded?.venues?.[0]?.boxOfficeInfo?.generalInfo || null,
+        distance: event._embedded?.venues?.[0]?.distance || null,
+        type: event.classifications?.[0]?.segment?.name || 'Event',
+        impact: this.calculateEventImpact(event)
+      }))
+      .filter(event => event.impact > 0.3)
+      .slice(0, 5);
+
+    console.log(`Found ${events.length} events for store ${store.store_id || store.id}:`, events);
           name: event.name,
           date: event.dates.start.localDate,
           time: event.dates.start.localTime,
@@ -357,7 +373,7 @@ class StoreIntelligenceService {
   async buildIntelligencePrompt(store, data) {
     const now = new Date();
     const localTime = this.getStoreLocalTime(store);
-    const baselines = await this.getStoreBaselines(store.store_id || store.id);
+    const baselines = await this.getStoreBaselines(store);
     
     // Parse local time more clearly
     const localDate = new Date(localTime);
@@ -456,6 +472,8 @@ if (isLateEvening) {
     }
   
     prompt.push(
+      `IMPORTANT: Only reference data that is explicitly provided above. Do not invent or assume any events, traffic conditions, or other factors not mentioned in the CURRENT CONDITIONS section.`,
+      ``,
       `GENERATE JSON RESPONSE:`,
       `{`,
       `  "insight": "Connect multiple factors for non-obvious impact (e.g., 'Lakers game + rain = 60% surge, extend all shifts')",`,
@@ -704,44 +722,20 @@ analyzeMultipleFactors(data, localHour, localDate) {
   }
 
 
-  async getStoreBaselines(storeId) {
-    try {
-      const query = `SELECT 
-        delivery_min_minutes, 
-        delivery_max_minutes,
-        carryout_min_minutes,
-        carryout_max_minutes,
-        minimum_delivery_order_amount
-      FROM store_baselines 
-      WHERE store_id = $1`;
-      
-      const result = await this.dbPool.query(query, [storeId]);
-  
-      if (result.rows.length > 0) {
-        const row = result.rows[0];
-        return {
-          delivery: { 
-            min: row.delivery_min_minutes, 
-            max: row.delivery_max_minutes 
-          },
-          carryout: { 
-            min: row.carryout_min_minutes, 
-            max: row.carryout_max_minutes 
-          },
-          minOrder: row.minimum_delivery_order_amount
-        };
-      }
-    } catch (error) {
-      console.error('Error fetching store baselines:', error);
-    }
-  
-    // Return defaults if not found
-    return {
-      delivery: { min: 25, max: 45 },
-      carryout: { min: 15, max: 25 },
-      minOrder: 15
-    };
-  }
+  async getStoreBaselines(store) {
+  // Use data directly from the store object (locations table)
+  return {
+    delivery: { 
+      min: store.estimated_wait_minutes || 25, 
+      max: (store.estimated_wait_minutes || 25) + 20 
+    },
+    carryout: { 
+      min: 15, 
+      max: 25 
+    },
+    minOrder: store.minimum_delivery_order_amount || 15
+  };
+}
 
 
 
