@@ -145,8 +145,8 @@ class StoreIntelligenceService {
       const response = await axios.get(
         'https://maps.googleapis.com/maps/api/directions/json', {
           params: {
-            origin: `${store.latitude},${store.longitude}`,
-            destination: `${store.latitude + kmToDegrees},${store.longitude + kmToDegrees}`,
+            origin: `${store.store_latitude},${store.store_longitude}`,
+            destination: `${store.store_latitude + kmToDegrees},${store.store_longitude + kmToDegrees}`,
             mode: 'driving',
             departure_time: 'now',
             traffic_model: 'best_guess',
@@ -482,12 +482,12 @@ Return JSON with:
   }
 
   findNearbyLocation(store, locations) {
-    if (!store.latitude || !store.longitude) return null;
+    if (!store.store_latitude || !store.store_longitude) return null;
     
     for (const location of locations) {
       const distance = this.calculateDistance(
-        store.latitude,
-        store.longitude,
+        store.store_latitude,
+        store.store_longitude,
         location.lat,
         location.lng
       );
