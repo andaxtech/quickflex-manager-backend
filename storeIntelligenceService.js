@@ -485,8 +485,14 @@ if (isLateEvening) {
 `- Clear weather: Modest 5-10% increase in orders vs rain`,
 `- For suburban stores: Peak times are usually 6-8 PM on weekends`,
 ``,
-`Be SPECIFIC: Instead of "prepare for busy night", say "Call 2 drivers for 7-9 PM shift"`,
-`Be REALISTIC: Don't exaggerate impacts. Clear weather = modest increase, not "surge"`,
+`ACTIONABLE ADVICE:`,
+`- For todayActions: Focus on what can be done RIGHT NOW without assuming specific shift structures`,
+`- Examples: "Check with your available drivers", "Ensure kitchen is fully prepped", "Brief your team on tonight's expectations"`,
+`- Avoid specific times or shift durations we don't know about`,
+``,
+`For weekOutlook: Only mention significant items (events, weather changes, holidays)`,
+`- Skip day-by-day breakdown unless something notable happens`,
+`- Example: "Steady week ahead, prepare for rain Thursday"`,
       ``,
       `INSIGHT REQUIREMENTS:`,
       `- Connect 2+ factors when they compound each other`,
@@ -622,7 +628,7 @@ analyzeMultipleFactors(data, localHour, localDate) {
         messages: [
           {
             role: "system",
-            content: "You are a helpful AI assistant supporting Domino's Pizza store managers. Provide encouraging, practical insights that empower managers to succeed. Use a positive, supportive tone while being actionable and specific. Always respond with valid JSON matching the requested format."
+            content: "You are a helpful AI assistant supporting Domino's Pizza store managers. Provide encouraging, practical insights that empower managers to succeed. Focus on what they can control RIGHT NOW. Don't assume specific shift times or structures. Keep week outlooks brief - only mention significant changes. Use a positive, supportive tone while being realistic. Always respond with valid JSON matching the requested format."
           },
           {
             role: "user",
