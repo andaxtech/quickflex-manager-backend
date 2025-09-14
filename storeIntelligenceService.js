@@ -10,10 +10,17 @@ class StoreIntelligenceService {
     this.dbPool = dbPool;
     this.cache = new Map();
     this.config = config;
+    this.lastApiCall = 0;
+    this.minApiDelay = 100; // milliseconds between API calls
   }
 
   async generateStoreInsight(store) {
     try {
+      // Validate required fields
+      if (!store.store_id || !store.city || !store.state) {
+      console.error(`Missing required fields for store: ${store.store_id}`);
+      return this.getFallbackInsight(store);
+    }
       if (!store.store_latitude || !store.store_longitude) {
         console.warn(`Store ${store.store_id} missing coordinates`);
         return this.getFallbackInsight(store);
@@ -126,10 +133,10 @@ class StoreIntelligenceService {
   async saveStoreClassification(storeId, classification) {
     try {
       const updateQuery = `
-        UPDATE locations 
-        SET metadata = COALESCE(metadata, '{}'::jsonb) || $2::jsonb
-        WHERE store_id = $1
-      `;
+  UPDATE locations 
+  SET metadata = COALESCE(metadata::jsonb, '{}'::jsonb) || $2::jsonb
+  WHERE store_id = $1
+`;
       
       const metadataUpdate = {
         store_type: classification.type,
@@ -344,6 +351,148 @@ class StoreIntelligenceService {
     return Math.min(impact, 1);
   }
 
+  async buildIntelligencePrompt(store, data) {
+    const now = new Date();
+    const localTime = this.getStoreLocalTime(store);
+    const baselines = await this.getStoreBaselines(store.store_id);
+    
+    // Parse local time more clearly
+    const localDate = new Date(localTime);
+    const localHour = localDate.getHours();
+    const isEvening = localHour >= 18;
+    const isLateEvening = localHour >= 20;
+    
+    // Process events more cleanly
+    const eventContext = this.processEventsForPrompt(data.events);
+    
+    // Build a focused, clear prompt
+    const prompt = [
+      `Generate ONE actionable insight for Domino's store ${store.store_id}.`,
+      ``,
+      `CURRENT SITUATION:`,
+      `- Location: ${store.city}, ${store.region || store.state}`,
+      `- Store Type: ${data.storeType.type}`,
+      `- Local Time: ${localDate.toLocaleTimeString()} on ${localDate.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}`,
+      `- Staffing: ${store.shifts?.open || 0} open shifts, ${store.shifts?.booked || 0} booked`,
+      ``,
+      `CURRENT CONDITIONS:`
+    ];
+  
+    // Add weather if available
+    if (data.weather) {
+      prompt.push(`- Weather: ${data.weather.temperature}°F, ${data.weather.condition}`);
+    }
+  
+    // Add traffic if significant
+    if (data.traffic && data.traffic.delayMinutes > 5) {
+      prompt.push(`- Traffic: ${data.traffic.delayMinutes} minute delays (${data.traffic.congestionLevel} congestion)`);
+    }
+  
+    // Add holidays
+    if (data.holidays && data.holidays.length > 0) {
+      const holidayNames = data.holidays.slice(0, 3).map(h => h.name).join(', ');
+      prompt.push(`- Upcoming Holidays: ${holidayNames}`);
+    }
+  
+    // Add events
+    if (eventContext.hasEvents) {
+      prompt.push(`- Local Events: ${eventContext.summary}`);
+    }
+  
+    prompt.push(
+      ``,
+      `STORE BASELINES:`,
+      `- Normal Delivery: ${baselines.delivery.min}-${baselines.delivery.max} minutes`,
+      `- Normal Carryout: ${baselines.carryout.min}-${baselines.carryout.max} minutes`,
+      `- Minimum Delivery: $${baselines.minOrder}`,
+      ``
+    );
+  
+    // Time-based action rules (simplified)
+    if (isLateEvening) {
+      prompt.push(
+        `TIME CONSTRAINT: It's late evening (after 8 PM).`,
+        `- Focus on: immediate staffing, quality control, closing prep`,
+        `- Avoid: promotions, next-day planning, marketing`,
+        ``
+      );
+    } else if (isEvening) {
+      prompt.push(
+        `TIME CONSTRAINT: It's evening (6-8 PM).`,
+        `- Focus on: tonight's rush, driver allocation, wait times`,
+        `- Avoid: marketing campaigns, tomorrow's prep`,
+        ``
+      );
+    } else {
+      prompt.push(
+        `TIME CONSTRAINT: It's ${localHour < 12 ? 'morning' : 'afternoon'}.`,
+        `- Can suggest: full-day operations, prep work, promotions`,
+        ``
+      );
+    }
+  
+    prompt.push(
+      `GENERATE JSON RESPONSE:`,
+      `{`,
+      `  "insight": "One specific action addressing the highest-impact factor (max 100 chars)",`,
+      `  "severity": "info" OR "warning" OR "critical",`,
+      `  "metrics": {`,
+      `    "expectedOrderIncrease": 0-100 (percentage),`,
+      `    "recommendedExtraDrivers": 0-10 (whole number),`,
+      `    "peakHours": "HH-HH" format or null,`,
+      `    "primaryReason": "the main factor driving this recommendation"`,
+      `  },`,
+      `  "todayActions": "Action executable RIGHT NOW given current time (max 80 chars)",`,
+      `  "weekOutlook": "5-day forecast with specific dates/events (max 100 chars)"`,
+      `}`,
+      ``,
+      `PRIORITY ORDER FOR DECISIONS:`,
+      `1. Major events (sports/concerts) within 15 miles`,
+      `2. Severe weather conditions`,
+      `3. Traffic delays over 15 minutes`,
+      `4. Holidays in next 3 days`,
+      `5. Store type patterns`,
+      ``,
+      `Base your recommendation on the highest-priority factor present.`
+    );
+  
+    return prompt.join('\n');
+  }
+  
+  // Helper method to process events cleanly
+  processEventsForPrompt(events) {
+    if (!events || events.length === 0) {
+      return { hasEvents: false, summary: null };
+    }
+    
+    const processedEvents = events.map(e => {
+      const date = new Date(e.date);
+      const dateStr = date.toLocaleDateString('en-US', { 
+        weekday: 'short', 
+        month: 'short', 
+        day: 'numeric' 
+      });
+      return `${dateStr}: ${e.name} at ${e.venue}`;
+    });
+    
+    return {
+      hasEvents: true,
+      summary: processedEvents.join('; ')
+    };
+  }
+  
+
+  async retryOpenAI(fn, retries = 2) {
+    try {
+      return await fn();
+    } catch (error) {
+      if (retries === 0 || error.status !== 429) throw error;
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      return this.retryOpenAI(fn, retries - 1);
+    }
+  }
+
+  // Enhanced AI call with better error handling
   async generateAIInsight(store, data) {
     const prompt = await this.buildIntelligencePrompt(store, data);
     
@@ -352,141 +501,66 @@ class StoreIntelligenceService {
     console.log('=== END PROMPT ===\n');
     
     try {
-      const completion = await this.openai.chat.completions.create({
+      // Simple rate limiting
+        const now = Date.now();
+        const timeSinceLastCall = now - this.lastApiCall;
+        if (timeSinceLastCall < this.minApiDelay) {
+          await new Promise(resolve => setTimeout(resolve, this.minApiDelay - timeSinceLastCall));
+        }
+        this.lastApiCall = Date.now();
+
+        const completion = await this.retryOpenAI(async () => {
+          return await this.openai.chat.completions.create({
         model: this.config.ai.model,
-        messages: [{ role: "user", content: prompt }],
-        temperature: this.config.ai.temperature,
+        messages: [
+          {
+            role: "system",
+            content: "You are an AI assistant for Domino's Pizza operations. Provide practical, actionable insights for store managers. Always respond with valid JSON matching the requested format."
+          },
+          {
+            role: "user",
+            content: prompt
+          }
+        ],
+        temperature: 0.7, // Lower for more consistent outputs
         max_tokens: this.config.ai.maxTokens,
         response_format: { type: "json_object" }
       });
+    });
   
       const aiResponse = JSON.parse(completion.choices[0].message.content);
+      
+      // Validate and clean the response
+      const validatedResponse = this.validateAIResponse(aiResponse);
+      
       console.log(`\n=== AI RESPONSE for Store ${store.store_id} ===`);
-      console.log(JSON.stringify(aiResponse, null, 2));
+      console.log(JSON.stringify(validatedResponse, null, 2));
       console.log('=== END RESPONSE ===\n');
       
-      return aiResponse;
+      return validatedResponse;
     } catch (error) {
       console.error('OpenAI API error:', error);
       return this.getFallbackInsight(store);
     }
   }
-
-  async buildIntelligencePrompt(store, data) {
-    const now = new Date();
-    const localTime = this.getStoreLocalTime(store);
-    const baselines = await this.getStoreBaselines(store.store_id);
-    
-    let eventsSummary = 'No major events';
-    let eventDetails = [];
-    if (data.events && data.events.length > 0) {
-      eventDetails = data.events.map(e => {
-        const dateObj = new Date(e.date);
-        const dayName = dateObj.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
-        return {
-          description: `${dayName}: ${e.name} at ${e.venue} (${e.type})`,
-          impact: e.impact,
-          capacity: e.capacity
-        };
-      });
-      eventsSummary = eventDetails.map(e => e.description).join('; ');
-    }
-    
-    const promptParts = [
-      `You are Domino's Store Mentor. Generate ONE actionable insight for store ${store.store_id}.`,
-      `CRITICAL: Use ACTION VERBS only - tell managers exactly WHAT to do, not what to expect.`,
-      '',
-      'Store Context:',
-      `- Location: ${store.city}, ${store.region || store.state}`,
-      `- Type: ${data.storeType.type}`,
-      `- Local Time: ${localTime} (THIS IS CRITICAL - base all "today" actions on this time)`,
-      `- Current Date: ${new Date().toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })}`,
-      `- Open Shifts: ${store.shifts?.open || 0}`,
-      `- Booked Shifts: ${store.shifts?.booked || 0}`,
-      '',
-      'Current Data:',
-      `- Weather: ${data.weather ? data.weather.temperature + '°F, ' + data.weather.condition : 'unavailable'}`,
-      `- Traffic: ${data.traffic ? data.traffic.delayMinutes + ' min delays' : 'normal'}`,
-      `- Holidays (next 7 days): ${data.holidays?.slice(0,3).map(h => h.name).join(', ') || 'none'}`,
-      `- Local Events: ${eventsSummary}`,
-      ''
-    ];
-
-    // Add specific traffic alert if significant delays
-    if (data.traffic && data.traffic.delayMinutes > 10) {
-      promptParts.push(`- Traffic Alert: Major delays on nearby routes (${data.traffic.delayMinutes} min)`);
-      promptParts.push('');
-    }
-
-    if (data.events && data.events.length > 0) {
-      promptParts.push('EVENT IMPACT: Major events detected nearby that will drive pizza demand.');
-      promptParts.push('');
-    }
-
-    promptParts.push('Baselines:');
-    promptParts.push(`- Delivery: ${baselines.delivery.min}-${baselines.delivery.max} minutes`);
-    promptParts.push(`- Carryout: ${baselines.carryout.min}-${baselines.carryout.max} minutes`);
-    promptParts.push(`- Min delivery: $${baselines.minOrder}`);
-    promptParts.push('');
-    promptParts.push('Return JSON with:');
-    promptParts.push('{');
-    promptParts.push('  "insight": "specific action for NOW - MUST include event name/reason (max 100 chars)",');
-    promptParts.push('  "severity": "info|warning|critical",');
-    promptParts.push('  "metrics": {');
-    promptParts.push('    "expectedOrderIncrease": percentage,');
-    promptParts.push('    "recommendedExtraDrivers": number,');
-    promptParts.push('    "peakHours": "17-20" or null,');
-    promptParts.push('    "primaryReason": "specific cause (e.g., Lakers game, I-405 accident, Veterans Day)"');
-    promptParts.push('  },');
-    promptParts.push('  "todayActions": "what to do TODAY with specific reason (max 80 chars)",');
-    promptParts.push('  "weekOutlook": "5-day forecast with SPECIFIC events/dates mentioned (max 100 chars)"');
-    promptParts.push('}');
-    promptParts.push('');
-    promptParts.push('REQUIREMENTS:');
-    promptParts.push('- Always mention specific event names (e.g., "Taylor Swift at SoFi Stadium")');
-    promptParts.push('- Include specific roads for traffic (e.g., "I-405 accident causing 45min delays")');
-    promptParts.push('- Name specific holidays or dates (e.g., "Veterans Day surge on Nov 11")');
-    promptParts.push('- Never be vague - managers need verifiable details');
-
-    return promptParts.join('\n');
-  }
-
-  async getStoreBaselines(storeId) {
-    try {
-      const query = `SELECT 
-        delivery_min_minutes, 
-        delivery_max_minutes,
-        carryout_min_minutes,
-        carryout_max_minutes,
-        minimum_delivery_order_amount
-      FROM store_baselines 
-      WHERE store_id = $1`;
-      
-      const result = await this.dbPool.query(query, [storeId]);
-
-      if (result.rows.length > 0) {
-        const row = result.rows[0];
-        return {
-          delivery: { 
-            min: row.delivery_min_minutes, 
-            max: row.delivery_max_minutes 
-          },
-          carryout: { 
-            min: row.carryout_min_minutes, 
-            max: row.carryout_max_minutes 
-          },
-          minOrder: row.minimum_delivery_order_amount
-        };
-      }
-    } catch (error) {
-      console.error('Error fetching store baselines:', error);
-    }
-
-    return {
-      delivery: this.config.baselines.deliveryMinutes,
-      carryout: this.config.baselines.carryoutMinutes,
-      minOrder: this.config.baselines.minDeliveryOrder
+  
+  // Add this new validation method
+  validateAIResponse(response) {
+    // Ensure all required fields exist with proper types
+    const validated = {
+      insight: String(response.insight || "Monitor standard operations").substring(0, 100),
+      severity: ["info", "warning", "critical"].includes(response.severity) ? response.severity : "info",
+      metrics: {
+        expectedOrderIncrease: Math.min(100, Math.max(0, Number(response.metrics?.expectedOrderIncrease) || 0)),
+        recommendedExtraDrivers: Math.min(10, Math.max(0, Math.floor(Number(response.metrics?.recommendedExtraDrivers) || 0))),
+        peakHours: response.metrics?.peakHours || null,
+        primaryReason: String(response.metrics?.primaryReason || "standard operations")
+      },
+      todayActions: String(response.todayActions || "Follow standard procedures").substring(0, 80),
+      weekOutlook: String(response.weekOutlook || "Monitor daily conditions").substring(0, 100)
     };
+    
+    return validated;
   }
 
   /**
@@ -532,6 +606,51 @@ class StoreIntelligenceService {
     const mins = parseInt(match[3], 10);
     return sign * (hours * 60 + mins);
   }
+
+
+  async getStoreBaselines(storeId) {
+    try {
+      const query = `SELECT 
+        delivery_min_minutes, 
+        delivery_max_minutes,
+        carryout_min_minutes,
+        carryout_max_minutes,
+        minimum_delivery_order_amount
+      FROM store_baselines 
+      WHERE store_id = $1`;
+      
+      const result = await this.dbPool.query(query, [storeId]);
+  
+      if (result.rows.length > 0) {
+        const row = result.rows[0];
+        return {
+          delivery: { 
+            min: row.delivery_min_minutes, 
+            max: row.delivery_max_minutes 
+          },
+          carryout: { 
+            min: row.carryout_min_minutes, 
+            max: row.carryout_max_minutes 
+          },
+          minOrder: row.minimum_delivery_order_amount
+        };
+      }
+    } catch (error) {
+      console.error('Error fetching store baselines:', error);
+    }
+  
+    // Return defaults if not found
+    return {
+      delivery: { min: 25, max: 45 },
+      carryout: { min: 15, max: 25 },
+      minOrder: 15
+    };
+  }
+
+
+
+
+
 
   getFallbackInsight(store) {
     return {
@@ -594,6 +713,27 @@ class StoreIntelligenceService {
     }
     return null;
   }
+
+  async generateBatchInsights(stores, batchSize = 3) {
+  const results = [];
+  for (let i = 0; i < stores.length; i += batchSize) {
+    const batch = stores.slice(i, i + batchSize);
+    const batchResults = await Promise.all(
+      batch.map(store => 
+        this.generateStoreInsight(store).catch(err => {
+          console.error(`Failed for store ${store.store_id}:`, err);
+          return this.getFallbackInsight(store);
+        })
+      )
+    );
+    results.push(...batchResults);
+    // Delay between batches to avoid rate limits
+    if (i + batchSize < stores.length) {
+      await new Promise(resolve => setTimeout(resolve, 1000));
+    }
+  }
+  return results;
+}
 }
 
 module.exports = StoreIntelligenceService;
