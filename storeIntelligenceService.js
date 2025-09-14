@@ -1,13 +1,9 @@
-// Add this at the very top of your file to help debug
-console.log('Loading StoreIntelligenceService...');
-
 const axios = require('axios');
 const OpenAI = require('openai');
 const config = require('./intelligenceConfig');
 
 class StoreIntelligenceService {
   constructor(openAIKey, googleMapsKey, weatherService, dbPool) {
-    console.log('Initializing StoreIntelligenceService...');
     this.openai = new OpenAI({ apiKey: openAIKey });
     this.googleMapsKey = googleMapsKey;
     this.weatherService = weatherService;
@@ -16,29 +12,27 @@ class StoreIntelligenceService {
     this.config = config;
   }
 
-  // Main method to generate insights
   async generateStoreInsight(store) {
     try {
-      // Ensure we have coordinates
       if (!store.store_latitude || !store.store_longitude) {
         console.warn(`Store ${store.store_id} missing coordinates`);
         return this.getFallbackInsight(store);
       }
 
-      // Collect all data in parallel
-      const [weather, traffic, holidays, events] = await Promise.allSettled([
+      const dataPromises = [
         this.weatherService.getWeatherByCity(store.city, store.region || store.state, store),
         this.getTrafficData(store),
         this.getHolidays(),
         this.getLocalEvents(store)
-      ]);
+      ];
 
-      // Build the data object with store-specific data
+      const results = await Promise.allSettled(dataPromises);
+
       const collectedData = {
-        weather: weather.status === 'fulfilled' ? weather.value : null,
-        traffic: traffic.status === 'fulfilled' ? traffic.value : null,
-        holidays: holidays.status === 'fulfilled' ? holidays.value : null,
-        events: events.status === 'fulfilled' ? events.value : null,
+        weather: results[0].status === 'fulfilled' ? results[0].value : null,
+        traffic: results[1].status === 'fulfilled' ? results[1].value : null,
+        holidays: results[2].status === 'fulfilled' ? results[2].value : null,
+        events: results[3].status === 'fulfilled' ? results[3].value : null,
         storeType: await this.classifyStore(store),
         storeStatus: {
           isOnline: store.is_online_now && !store.is_force_offline,
@@ -49,7 +43,6 @@ class StoreIntelligenceService {
         }
       };
 
-      // Generate AI insight
       return await this.generateAIInsight(store, collectedData);
     } catch (error) {
       console.error('Error generating store insight:', error);
@@ -58,17 +51,13 @@ class StoreIntelligenceService {
   }
 
   async classifyStore(store) {
-    // First, check if store has classification in database
     const dbClassification = await this.getStoreClassification(store.store_id);
     if (dbClassification) return dbClassification;
 
-    // Otherwise, use proximity detection
     const militaryBases = this.config.locations.militaryBases[store.state] || [];
     const colleges = this.config.locations.colleges[store.state] || [];
 
-    // Check proximity to military bases
     const nearbyBase = this.findNearbyLocation(store, militaryBases);
-    
     if (nearbyBase) {
       return {
         type: 'military',
@@ -77,9 +66,7 @@ class StoreIntelligenceService {
       };
     }
 
-    // Check proximity to colleges
     const nearbyCollege = this.findNearbyLocation(store, colleges);
-    
     if (nearbyCollege) {
       return {
         type: 'college',
@@ -88,7 +75,6 @@ class StoreIntelligenceService {
       };
     }
 
-    // Default classification
     return {
       type: 'suburban',
       subType: 'standard',
@@ -98,10 +84,8 @@ class StoreIntelligenceService {
 
   async getStoreClassification(storeId) {
     try {
-      const result = await this.dbPool.query(
-        'SELECT store_type, sub_type FROM store_classifications WHERE store_id = $1',
-        [storeId]
-      );
+      const query = 'SELECT store_type, sub_type FROM store_classifications WHERE store_id = $1';
+      const result = await this.dbPool.query(query, [storeId]);
       
       if (result.rows.length > 0) {
         const row = result.rows[0];
@@ -118,7 +102,6 @@ class StoreIntelligenceService {
   }
 
   async getPatternsByType(type) {
-    // These should also come from database eventually
     const patterns = {
       military: {
         paydaySurge: { dates: [1, 15], multiplier: 1.45 },
@@ -143,21 +126,21 @@ class StoreIntelligenceService {
     if (cached) return cached;
 
     try {
-      // Calculate destination based on configured distance
-      const kmToDegrees = this.config.traffic.sampleDistanceKm / 111; // rough conversion
+      const kmToDegrees = this.config.traffic.sampleDistanceKm / 111;
+      const origin = `${store.store_latitude},${store.store_longitude}`;
+      const destination = `${store.store_latitude + kmToDegrees},${store.store_longitude + kmToDegrees}`;
       
-      const response = await axios.get(
-        'https://maps.googleapis.com/maps/api/directions/json', {
-          params: {
-            origin: `${store.store_latitude},${store.store_longitude}`,
-            destination: `${store.store_latitude + kmToDegrees},${store.store_longitude + kmToDegrees}`,
-            mode: 'driving',
-            departure_time: 'now',
-            traffic_model: 'best_guess',
-            key: this.googleMapsKey
-          }
-        }
-      );
+      const url = 'https://maps.googleapis.com/maps/api/directions/json';
+      const params = {
+        origin: origin,
+        destination: destination,
+        mode: 'driving',
+        departure_time: 'now',
+        traffic_model: 'best_guess',
+        key: this.googleMapsKey
+      };
+      
+      const response = await axios.get(url, { params });
 
       const route = response.data.routes[0];
       if (!route) return null;
@@ -180,14 +163,14 @@ class StoreIntelligenceService {
   }
 
   calculateCongestionLevel(delayMinutes) {
-    const { heavy, moderate } = this.config.traffic.congestionThresholds;
+    const heavy = this.config.traffic.congestionThresholds.heavy;
+    const moderate = this.config.traffic.congestionThresholds.moderate;
     
     if (delayMinutes > heavy) return 'heavy';
     if (delayMinutes > moderate) return 'moderate';
     return 'light';
   }
 
-  // analyze holidays
   async getHolidays() {
     const cacheKey = 'holidays_US';
     const cached = this.getCached(cacheKey, this.config.cache.holidays);
@@ -195,9 +178,8 @@ class StoreIntelligenceService {
 
     try {
       const year = new Date().getFullYear();
-      const response = await axios.get(
-        `https://date.nager.at/api/v3/PublicHolidays/${year}/US`
-      );
+      const url = `https://date.nager.at/api/v3/PublicHolidays/${year}/US`;
+      const response = await axios.get(url);
 
       const holidays = response.data
         .filter(h => new Date(h.date) >= new Date())
@@ -211,14 +193,12 @@ class StoreIntelligenceService {
     }
   }
 
-  // analyze local events
   async getLocalEvents(store) {
     const cacheKey = `events_${store.store_id}`;
-    const cached = this.getCached(cacheKey, this.config.cache.events || 3600000); // 1 hour cache
+    const cached = this.getCached(cacheKey, this.config.cache.events || 3600000);
     if (cached) return cached;
 
     try {
-      // Ticketmaster requires API key
       const tmApiKey = process.env.TICKETMASTER_API_KEY;
       if (!tmApiKey) {
         console.log('Ticketmaster API key not configured');
@@ -227,31 +207,28 @@ class StoreIntelligenceService {
 
       const now = new Date();
       const endDate = new Date();
-      endDate.setDate(endDate.getDate() + 7); // Next 7 days
+      endDate.setDate(endDate.getDate() + 7);
 
-      const response = await axios.get(
-        'https://app.ticketmaster.com/discovery/v2/events.json',
-        {
-          params: {
-            apikey: tmApiKey,
-            latlong: `${store.store_latitude},${store.store_longitude}`,
-            radius: '15', // 15 miles
-            unit: 'miles',
-            startDateTime: now.toISOString().split('.')[0] + 'Z',
-            endDateTime: endDate.toISOString().split('.')[0] + 'Z',
-            size: 20,
-            sort: 'date,asc',
-            classificationName: 'Sports,Music,Arts & Theatre' // High-impact events
-          }
-        }
-      );
+      const url = 'https://app.ticketmaster.com/discovery/v2/events.json';
+      const params = {
+        apikey: tmApiKey,
+        latlong: `${store.store_latitude},${store.store_longitude}`,
+        radius: '15',
+        unit: 'miles',
+        startDateTime: now.toISOString().split('.')[0] + 'Z',
+        endDateTime: endDate.toISOString().split('.')[0] + 'Z',
+        size: 20,
+        sort: 'date,asc',
+        classificationName: 'Sports,Music,Arts & Theatre'
+      };
+
+      const response = await axios.get(url, { params });
 
       if (!response.data._embedded?.events) {
         this.setCache(cacheKey, []);
         return [];
       }
 
-      // Process and filter events
       const events = response.data._embedded.events
         .map(event => ({
           name: event.name,
@@ -263,8 +240,8 @@ class StoreIntelligenceService {
           type: event.classifications?.[0]?.segment?.name || 'Event',
           impact: this.calculateEventImpact(event)
         }))
-        .filter(event => event.impact > 0.3) // Only high-impact events
-        .slice(0, 5); // Top 5 events
+        .filter(event => event.impact > 0.3)
+        .slice(0, 5);
 
       this.setCache(cacheKey, events);
       return events;
@@ -277,37 +254,47 @@ class StoreIntelligenceService {
   calculateEventImpact(event) {
     let impact = 0;
     
-    // Venue size impact
     const venue = event._embedded?.venues?.[0];
     if (venue) {
       const capacity = parseInt(venue.capacity) || 0;
-      if (capacity > 50000) impact += 0.5;
-      else if (capacity > 20000) impact += 0.4;
-      else if (capacity > 10000) impact += 0.3;
-      else if (capacity > 5000) impact += 0.2;
+      if (capacity > 50000) {
+        impact += 0.5;
+      } else if (capacity > 20000) {
+        impact += 0.4;
+      } else if (capacity > 10000) {
+        impact += 0.3;
+      } else if (capacity > 5000) {
+        impact += 0.2;
+      }
       
-      // Distance impact (closer = higher impact)
       const distance = parseFloat(venue.distance) || 15;
-      if (distance < 3) impact += 0.3;
-      else if (distance < 5) impact += 0.2;
-      else if (distance < 10) impact += 0.1;
+      if (distance < 3) {
+        impact += 0.3;
+      } else if (distance < 5) {
+        impact += 0.2;
+      } else if (distance < 10) {
+        impact += 0.1;
+      }
     }
     
-    // Event type impact
     const eventType = event.classifications?.[0]?.segment?.name;
-    if (eventType === 'Sports') impact += 0.2;
-    if (eventType === 'Music') impact += 0.15;
+    if (eventType === 'Sports') {
+      impact += 0.2;
+    } else if (eventType === 'Music') {
+      impact += 0.15;
+    }
     
-    // Day of week impact
     const eventDate = new Date(event.dates.start.localDate);
     const dayOfWeek = eventDate.getDay();
-    if (dayOfWeek === 5 || dayOfWeek === 6) impact += 0.1; // Friday/Saturday
+    if (dayOfWeek === 5 || dayOfWeek === 6) {
+      impact += 0.1;
+    }
     
-    return Math.min(impact, 1); // Cap at 1
+    return Math.min(impact, 1);
   }
 
   async generateAIInsight(store, data) {
-    const prompt = this.buildIntelligencePrompt(store, data);
+    const prompt = await this.buildIntelligencePrompt(store, data);
     
     try {
       const completion = await this.openai.chat.completions.create({
@@ -330,61 +317,70 @@ class StoreIntelligenceService {
     const localTime = this.getStoreLocalTime(store);
     const baselines = await this.getStoreBaselines(store.store_id);
     
-    // Format events for prompt
-    const eventsSummary = data.events && data.events.length > 0
-      ? data.events.map(e => `${e.date}: ${e.name} at ${e.venue} (${e.type})`).join('; ')
-      : 'No major events';
+    let eventsSummary = 'No major events';
+    if (data.events && data.events.length > 0) {
+      const eventDescriptions = data.events.map(e => {
+        return `${e.date}: ${e.name} at ${e.venue} (${e.type})`;
+      });
+      eventsSummary = eventDescriptions.join('; ');
+    }
     
-    return `You are Domino's Store Mentor. Generate ONE actionable insight for store ${store.store_id}.
+    const promptParts = [
+      `You are Domino's Store Mentor. Generate ONE actionable insight for store ${store.store_id}.`,
+      '',
+      'Store Context:',
+      `- Location: ${store.city}, ${store.region || store.state}`,
+      `- Type: ${data.storeType.type}`,
+      `- Local Time: ${localTime}`,
+      `- Open Shifts: ${store.shifts?.open || 0}`,
+      `- Booked Shifts: ${store.shifts?.booked || 0}`,
+      '',
+      'Current Data:',
+      `- Weather: ${data.weather ? data.weather.temperature + '°F, ' + data.weather.condition : 'unavailable'}`,
+      `- Traffic: ${data.traffic ? data.traffic.delayMinutes + ' min delays' : 'normal'}`,
+      `- Holidays (next 7 days): ${data.holidays?.slice(0,3).map(h => h.name).join(', ') || 'none'}`,
+      `- Local Events: ${eventsSummary}`,
+      ''
+    ];
 
-    Store Context:
-    - Location: ${store.city}, ${store.region || store.state}
-    - Type: ${data.storeType.type}
-    - Local Time: ${localTime}
-    - Open Shifts: ${store.shifts?.open || 0}
-    - Booked Shifts: ${store.shifts?.booked || 0}
-    
-    Current Data:
-    - Weather: ${data.weather ? data.weather.temperature + '°F, ' + data.weather.condition : 'unavailable'}
-    - Traffic: ${data.traffic ? data.traffic.delayMinutes + ' min delays' : 'normal'}
-    - Holidays (next 7 days): ${data.holidays?.slice(0,3).map(h => h.name).join(', ') || 'none'}
-    - Local Events: ${eventsSummary}
-    
-    ${data.events && data.events.length > 0 ? 'EVENT IMPACT: Major events detected nearby that will drive pizza demand.' : ''}
-    
-    Baselines:
-    - Delivery: ${baselines.delivery.min}-${baselines.delivery.max} minutes
-    - Carryout: ${baselines.carryout.min}-${baselines.carryout.max} minutes
-    - Min delivery: $${baselines.minOrder}
-    
-    Return JSON with:
-    {
-      "insight": "specific action for NOW (max 100 chars)",
-      "severity": "info|warning|critical",
-      "metrics": {
-        "expectedOrderIncrease": percentage,
-        "recommendedExtraDrivers": number,
-        "peakHours": "17-20" or null
-      },
-      "todayActions": "what to do TODAY (max 80 chars)",
-      "weekOutlook": "5-day forecast impact (max 80 chars)"
-    }`;
+    if (data.events && data.events.length > 0) {
+      promptParts.push('EVENT IMPACT: Major events detected nearby that will drive pizza demand.');
+      promptParts.push('');
+    }
+
+    promptParts.push('Baselines:');
+    promptParts.push(`- Delivery: ${baselines.delivery.min}-${baselines.delivery.max} minutes`);
+    promptParts.push(`- Carryout: ${baselines.carryout.min}-${baselines.carryout.max} minutes`);
+    promptParts.push(`- Min delivery: $${baselines.minOrder}`);
+    promptParts.push('');
+    promptParts.push('Return JSON with:');
+    promptParts.push('{');
+    promptParts.push('  "insight": "specific action for NOW (max 100 chars)",');
+    promptParts.push('  "severity": "info|warning|critical",');
+    promptParts.push('  "metrics": {');
+    promptParts.push('    "expectedOrderIncrease": percentage,');
+    promptParts.push('    "recommendedExtraDrivers": number,');
+    promptParts.push('    "peakHours": "17-20" or null');
+    promptParts.push('  },');
+    promptParts.push('  "todayActions": "what to do TODAY (max 80 chars)",');
+    promptParts.push('  "weekOutlook": "5-day forecast impact (max 80 chars)"');
+    promptParts.push('}');
+
+    return promptParts.join('\n');
   }
 
   async getStoreBaselines(storeId) {
-    // Try to get from database first
     try {
-      const result = await this.dbPool.query(
-        `SELECT 
-          delivery_min_minutes, 
-          delivery_max_minutes,
-          carryout_min_minutes,
-          carryout_max_minutes,
-          minimum_delivery_order_amount
-        FROM store_baselines 
-        WHERE store_id = $1`,
-        [storeId]
-      );
+      const query = `SELECT 
+        delivery_min_minutes, 
+        delivery_max_minutes,
+        carryout_min_minutes,
+        carryout_max_minutes,
+        minimum_delivery_order_amount
+      FROM store_baselines 
+      WHERE store_id = $1`;
+      
+      const result = await this.dbPool.query(query, [storeId]);
 
       if (result.rows.length > 0) {
         const row = result.rows[0];
@@ -404,7 +400,6 @@ class StoreIntelligenceService {
       console.error('Error fetching store baselines:', error);
     }
 
-    // Return defaults from config
     return {
       delivery: this.config.baselines.deliveryMinutes,
       carryout: this.config.baselines.carryoutMinutes,
@@ -420,7 +415,7 @@ class StoreIntelligenceService {
   }
 
   getStoreOffset(store) {
-    if (!store.time_zone_code) return -480; // PST default
+    if (!store.time_zone_code) return -480;
     
     const match = store.time_zone_code.match(/GMT([+-])(\d{2}):(\d{2})/);
     if (!match) return -480;
@@ -445,7 +440,6 @@ class StoreIntelligenceService {
     };
   }
 
-  // Helper methods
   getCached(key, ttl) {
     const cached = this.cache.get(key);
     if (!cached) return null;
@@ -460,13 +454,13 @@ class StoreIntelligenceService {
   
   setCache(key, data) {
     this.cache.set(key, {
-      data,
+      data: data,
       timestamp: Date.now()
     });
   }
   
   calculateDistance(lat1, lon1, lat2, lon2) {
-    const R = 3959; // Earth radius in miles
+    const R = 3959;
     const dLat = (lat2 - lat1) * Math.PI / 180;
     const dLon = (lon2 - lon1) * Math.PI / 180;
     const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
@@ -495,5 +489,4 @@ class StoreIntelligenceService {
   }
 }
 
-console.log('StoreIntelligenceService loaded successfully');
 module.exports = StoreIntelligenceService;
