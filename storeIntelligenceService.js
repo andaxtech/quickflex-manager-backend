@@ -72,29 +72,29 @@ class StoreIntelligenceService {
     }
 
     const nearbyCollege = this.findNearbyLocation(store, colleges);
-if (nearbyCollege) {
-  const classification = {
-    type: 'college',
-    subType: nearbyCollege.name,
-    patterns: await this.getPatternsByType('college')
-  };
-  
-  // Save to database
-  await this.saveStoreClassification(store.store_id, classification);
-  
-  return classification;
-}
+    if (nearbyCollege) {
+      const classification = {
+        type: 'college',
+        subType: nearbyCollege.name,
+        patterns: await this.getPatternsByType('college')
+      };
+      
+      // Save to database
+      await this.saveStoreClassification(store.store_id, classification);
+      
+      return classification;
+    }
 
-const classification = {
-  type: 'suburban',
-  subType: 'standard',
-  patterns: await this.getPatternsByType('suburban')
-};
+    const classification = {
+      type: 'suburban',
+      subType: 'standard',
+      patterns: await this.getPatternsByType('suburban')
+    };
 
-// Save to database
-await this.saveStoreClassification(store.store_id, classification);
+    // Save to database
+    await this.saveStoreClassification(store.store_id, classification);
 
-return classification;
+    return classification;
   }
 
   async getStoreClassification(storeId) {
@@ -123,7 +123,6 @@ return classification;
     return null;
   }
 
-
   async saveStoreClassification(storeId, classification) {
     try {
       const updateQuery = `
@@ -145,12 +144,6 @@ return classification;
       console.error('Error saving store classification:', error);
     }
   }
-
-
-
-
-
-
 
   async getPatternsByType(type) {
     const patterns = {
@@ -232,8 +225,15 @@ return classification;
       const url = `https://date.nager.at/api/v3/PublicHolidays/${year}/US`;
       const response = await axios.get(url);
 
+      const today = new Date();
+      const weekFromNow = new Date();
+      weekFromNow.setDate(today.getDate() + 7);
+
       const holidays = response.data
-        .filter(h => new Date(h.date) >= new Date())
+        .filter(h => {
+          const holidayDate = new Date(h.date);
+          return holidayDate >= today && holidayDate <= weekFromNow;
+        })
         .slice(0, 10);
 
       this.setCache(cacheKey, holidays);
@@ -378,19 +378,19 @@ return classification;
     const baselines = await this.getStoreBaselines(store.store_id);
     
     let eventsSummary = 'No major events';
-let eventDetails = [];
-if (data.events && data.events.length > 0) {
-  eventDetails = data.events.map(e => {
-    const dateObj = new Date(e.date);
-    const dayName = dateObj.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
-    return {
-      description: `${dayName}: ${e.name} at ${e.venue} (${e.type})`,
-      impact: e.impact,
-      capacity: e.capacity
-    };
-  });
-  eventsSummary = eventDetails.map(e => e.description).join('; ');
-}
+    let eventDetails = [];
+    if (data.events && data.events.length > 0) {
+      eventDetails = data.events.map(e => {
+        const dateObj = new Date(e.date);
+        const dayName = dateObj.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+        return {
+          description: `${dayName}: ${e.name} at ${e.venue} (${e.type})`,
+          impact: e.impact,
+          capacity: e.capacity
+        };
+      });
+      eventsSummary = eventDetails.map(e => e.description).join('; ');
+    }
     
     const promptParts = [
       `You are Domino's Store Mentor. Generate ONE actionable insight for store ${store.store_id}.`,
@@ -399,6 +399,7 @@ if (data.events && data.events.length > 0) {
       `- Location: ${store.city}, ${store.region || store.state}`,
       `- Type: ${data.storeType.type}`,
       `- Local Time: ${localTime}`,
+      `- Current Date: ${new Date().toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })}`,
       `- Open Shifts: ${store.shifts?.open || 0}`,
       `- Booked Shifts: ${store.shifts?.booked || 0}`,
       '',
@@ -408,14 +409,13 @@ if (data.events && data.events.length > 0) {
       `- Holidays (next 7 days): ${data.holidays?.slice(0,3).map(h => h.name).join(', ') || 'none'}`,
       `- Local Events: ${eventsSummary}`,
       ''
-      ];
+    ];
 
-      // Add specific traffic alert if significant delays
-      if (data.traffic && data.traffic.delayMinutes > 10) {
-        promptParts.push(`- Traffic Alert: Major delays on nearby routes (${data.traffic.delayMinutes} min)`);
-        promptParts.push('');
-      }
-    
+    // Add specific traffic alert if significant delays
+    if (data.traffic && data.traffic.delayMinutes > 10) {
+      promptParts.push(`- Traffic Alert: Major delays on nearby routes (${data.traffic.delayMinutes} min)`);
+      promptParts.push('');
+    }
 
     if (data.events && data.events.length > 0) {
       promptParts.push('EVENT IMPACT: Major events detected nearby that will drive pizza demand.');
@@ -428,33 +428,24 @@ if (data.events && data.events.length > 0) {
     promptParts.push(`- Min delivery: $${baselines.minOrder}`);
     promptParts.push('');
     promptParts.push('Return JSON with:');
-promptParts.push('{');
-promptParts.push('  "insight": "specific action for NOW - MUST include event name/reason (max 100 chars)",');
-promptParts.push('  "severity": "info|warning|critical",');
-promptParts.push('  "metrics": {');
-promptParts.push('    "expectedOrderIncrease": percentage,');
-promptParts.push('    "recommendedExtraDrivers": number,');
-promptParts.push('    "peakHours": "17-20" or null,');
-promptParts.push('    "primaryReason": "specific cause (e.g., Lakers game, I-405 accident, Veterans Day)"');
-promptParts.push('  },');
-promptParts.push('  "todayActions": "what to do TODAY with specific reason (max 80 chars)",');
-promptParts.push('  "weekOutlook": "5-day forecast with SPECIFIC events/dates mentioned (max 100 chars)"');
-promptParts.push('}');
-promptParts.push('');
-promptParts.push('REQUIREMENTS:');
-promptParts.push('- Always mention specific event names (e.g., "Taylor Swift at SoFi Stadium")');
-promptParts.push('- Include specific roads for traffic (e.g., "I-405 accident causing 45min delays")');
-promptParts.push('- Name specific holidays or dates (e.g., "Veterans Day surge on Nov 11")');
-promptParts.push('- Never be vague - managers need verifiable details');
+    promptParts.push('{');
+    promptParts.push('  "insight": "specific action for NOW - MUST include event name/reason (max 100 chars)",');
     promptParts.push('  "severity": "info|warning|critical",');
     promptParts.push('  "metrics": {');
     promptParts.push('    "expectedOrderIncrease": percentage,');
     promptParts.push('    "recommendedExtraDrivers": number,');
-    promptParts.push('    "peakHours": "17-20" or null');
+    promptParts.push('    "peakHours": "17-20" or null,');
+    promptParts.push('    "primaryReason": "specific cause (e.g., Lakers game, I-405 accident, Veterans Day)"');
     promptParts.push('  },');
-    promptParts.push('  "todayActions": "what to do TODAY (max 80 chars)",');
-    promptParts.push('  "weekOutlook": "5-day forecast impact (max 80 chars)"');
+    promptParts.push('  "todayActions": "what to do TODAY with specific reason (max 80 chars)",');
+    promptParts.push('  "weekOutlook": "5-day forecast with SPECIFIC events/dates mentioned (max 100 chars)"');
     promptParts.push('}');
+    promptParts.push('');
+    promptParts.push('REQUIREMENTS:');
+    promptParts.push('- Always mention specific event names (e.g., "Taylor Swift at SoFi Stadium")');
+    promptParts.push('- Include specific roads for traffic (e.g., "I-405 accident causing 45min delays")');
+    promptParts.push('- Name specific holidays or dates (e.g., "Veterans Day surge on Nov 11")');
+    promptParts.push('- Never be vague - managers need verifiable details');
 
     return promptParts.join('\n');
   }
@@ -497,18 +488,43 @@ promptParts.push('- Never be vague - managers need verifiable details');
     };
   }
 
+  /**
+   * Fixed: Get store local time using proper timezone conversion
+   * Following the pattern: storeLocalTime = UTC + offsetMinutes
+   */
   getStoreLocalTime(store) {
     const now = new Date();
-    const offset = this.getStoreOffset(store);
-    const localTime = new Date(now.getTime() + (offset * 60000));
-    return localTime.toISOString();
+    const offsetMinutes = this.fixedOffsetToMinutes(store.time_zone_code);
+    
+    // Critical: Use + for display (not -)
+    const storeLocalTimeMs = now.getTime() + (offsetMinutes * 60000);
+    
+    // Extract components manually to avoid JS Date timezone issues
+    const totalMinutes = Math.floor(storeLocalTimeMs / 60000);
+    const dayMinutes = ((totalMinutes % (24 * 60)) + (24 * 60)) % (24 * 60);
+    const hours = Math.floor(dayMinutes / 60);
+    const minutes = dayMinutes % 60;
+    
+    // Get the date components
+    const storeDate = new Date(storeLocalTimeMs);
+    const year = storeDate.getUTCFullYear();
+    const month = storeDate.getUTCMonth();
+    const day = storeDate.getUTCDate();
+    
+    // Create a date string in store local time
+    const localDateTime = new Date(Date.UTC(year, month, day, hours, minutes));
+    return localDateTime.toISOString();
   }
 
-  getStoreOffset(store) {
-    if (!store.time_zone_code) return -480;
+  /**
+   * Fixed: Parse timezone offset string to minutes
+   * Replaced getStoreOffset with proper implementation
+   */
+  fixedOffsetToMinutes(offsetStr) {
+    if (!offsetStr) return -480; // Default to PST if no timezone
     
-    const match = store.time_zone_code.match(/GMT([+-])(\d{2}):(\d{2})/);
-    if (!match) return -480;
+    const match = offsetStr.match(/GMT([+-])(\d{2}):(\d{2})/);
+    if (!match) return -480; // Default to PST if invalid format
     
     const sign = match[1] === '+' ? 1 : -1;
     const hours = parseInt(match[2], 10);
