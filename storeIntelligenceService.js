@@ -413,12 +413,23 @@ calculateCarryoutOpportunity(trigger, data) {
 
   async getEventbriteEvents(store) {
     try {
-      const ebToken = process.env.EVENTBRITE_TOKEN;
-      if (!ebToken) return [];
-
-      const response = await axios.get('https://www.eventbriteapi.com/v3/events/search', {  // Remove trailing slash
+      // Try public token first, then API key
+      const ebPublicToken = process.env.EVENTBRITE_PUBLIC_TOKEN;
+      const ebApiKey = process.env.EVENTBRITE_API_KEY;
+      
+      if (!ebPublicToken && !ebApiKey) {
+        console.log('No Eventbrite public token or API key configured');
+        return [];
+      }
+  
+      // Use OAuth token format for public token, or API key format
+      const authHeader = ebPublicToken 
+        ? `Bearer ${ebPublicToken}`
+        : `Bearer ${ebApiKey}`;
+  
+      const response = await axios.get('https://www.eventbriteapi.com/v3/events/search', {
         headers: {
-          'Authorization': `Bearer ${ebToken}`,
+          'Authorization': authHeader,
           'Accept': 'application/json'
         },
         params: {
