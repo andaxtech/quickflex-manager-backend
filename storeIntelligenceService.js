@@ -10,9 +10,11 @@ class StoreIntelligenceService {
     this.dbPool = dbPool;
     this.cache = new Map();
     this.config = config;
-    this.lastApiCall = 0;
-    this.minApiDelay = 100;
-    this.lastTicketmasterCall = 0; // Add this line
+    this.rateLimiter = {
+      general: { lastCall: 0, minDelay: 100 },
+      ticketmaster: { lastCall: 0, minDelay: 1000 },
+      google: { lastCall: 0, minDelay: 100 }
+    };
   }
 
   async generateStoreInsight(store) {
@@ -64,17 +66,39 @@ class StoreIntelligenceService {
   }
 
   async collectExternalData(store) {
-    const [weather, traffic, events] = await Promise.allSettled([
+    const [weather, traffic, events, boostWeek, slowPeriod] = await Promise.allSettled([
       this.getWeatherData(store),
       this.getTrafficData(store),
-      this.getEventData(store)
+      this.getEventData(store),
+      this.detectBoostWeekOpportunity(store),
+      this.analyzeSlowPeriod(store)
     ]);
-
-    return {
+  
+    const collectedData = {
       weather: weather.status === 'fulfilled' ? weather.value : null,
       traffic: traffic.status === 'fulfilled' ? traffic.value : null,
-      events: events.status === 'fulfilled' ? events.value : []
+      events: events.status === 'fulfilled' ? events.value : [],
+      boostWeek: boostWeek.status === 'fulfilled' ? boostWeek.value : null,
+      slowPeriod: slowPeriod.status === 'fulfilled' ? slowPeriod.value : null
     };
+    
+    
+    // Add delivery capacity analysis after we have weather data
+      if (collectedData.weather) {
+        const capacity = await this.analyzeDeliveryCapacity(store, {
+          weather: collectedData.weather,
+          context: await this.getStoreContext(store)
+        });
+        collectedData.deliveryCapacity = capacity;
+      }
+
+      // Check for upcoming holidays
+      const upcomingHoliday = await this.getUpcomingHoliday();
+      if (upcomingHoliday) {
+        collectedData.upcomingHoliday = upcomingHoliday;
+      }
+
+      return collectedData;
   }
 
   async getWeatherData(store) {
@@ -87,17 +111,58 @@ class StoreIntelligenceService {
       
       if (!weather) return null;
       
-      return {
+      const weatherData = {
         temp: Math.round(weather.temperature),
         condition: weather.condition,
         isRaining: weather.condition.toLowerCase().includes('rain'),
         isSevere: weather.condition.toLowerCase().match(/storm|snow|blizzard/)
       };
+      
+      weatherData.carryoutOpportunity = this.calculateCarryoutOpportunity('weather', weatherData);
+      
+      return weatherData;
     } catch (error) {
       console.error('Weather fetch error:', error);
       return null;
     }
   }
+
+
+// ADD THIS NEW METHOD HERE
+calculateCarryoutOpportunity(trigger, data) {
+  const opportunities = {
+    weather: {
+      rain: { discount: 30, margin: 15, message: "Beat the rain! 30% off when you pick up" },
+      severe: { discount: 50, margin: 15, message: "Skip the storm! 50% off all carryout orders" }
+    },
+    capacity: {
+      high: { discount: 30, margin: 12, message: "Skip the wait - 30% off carryout" },
+      critical: { discount: 50, margin: 12, message: "45+ min delivery times - 50% off carryout!" }
+    },
+    slowPeriod: {
+      afternoon: { discount: 20, margin: 10, message: "Afternoon special - 20% off carryout" }
+    }
+  };
+
+  let opportunity = null;
+  
+  if (trigger === 'weather' && data.isSevere) {
+    opportunity = { ...opportunities.weather.severe, reason: 'severe weather' };
+  } else if (trigger === 'weather' && data.isRaining) {
+    opportunity = { ...opportunities.weather.rain, reason: 'rain' };
+  } else if (trigger === 'capacity' && data.utilizationRate > 1) {
+    opportunity = { ...opportunities.capacity.critical, reason: 'critical capacity' };
+  } else if (trigger === 'capacity' && data.utilizationRate > 0.8) {
+    opportunity = { ...opportunities.capacity.high, reason: 'high capacity' };
+  } else if (trigger === 'slowPeriod' && data.name === 'afternoon') {
+    opportunity = { ...opportunities.slowPeriod.afternoon, reason: 'slow period' };
+  }
+
+  return opportunity ? { isActive: true, ...opportunity } : null;
+}
+
+
+
 
   async getTrafficData(store) {
     const cacheKey = `traffic_${store.id}`;
@@ -154,12 +219,9 @@ class StoreIntelligenceService {
       const tmApiKey = process.env.TICKETMASTER_API_KEY;
       if (!tmApiKey) return [];
   
+      
       // Rate limit protection for Ticketmaster API
-      const now = Date.now();
-      if (this.lastTicketmasterCall && (now - this.lastTicketmasterCall) < 1000) {
-        await new Promise(resolve => setTimeout(resolve, 1000 - (now - this.lastTicketmasterCall)));
-      }
-      this.lastTicketmasterCall = Date.now();
+      await this.enforceRateLimit('ticketmaster');
   
       const response = await axios.get('https://app.ticketmaster.com/discovery/v2/events.json', {
         params: {
@@ -176,9 +238,9 @@ class StoreIntelligenceService {
       if (!response.data._embedded?.events) return [];
 
       const events = response.data._embedded.events
-        .map(this.processEvent)
-        .filter(event => event.impact >= 0.5)
-        .slice(0, 3);
+      .map(event => this.processEvent(event))
+      .filter(event => event.impact >= 0.5)
+      .slice(0, 3);
 
       this.setCache(cacheKey, events);
       return events;
@@ -200,16 +262,71 @@ class StoreIntelligenceService {
     const capacity = parseInt(venue?.capacity) || 5000;
     const eventDate = new Date(event.dates.start.dateTime);
     
-    return {
+    const now = new Date();
+    const hoursUntilEvent = (eventDate - now) / (1000 * 60 * 60);
+    const daysUntilEvent = Math.floor(hoursUntilEvent / 24);
+
+    const eventData = {
       name: event.name,
       venue: venue?.name || 'Unknown',
       date: eventDate,
       time: eventDate.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
       capacity,
       type: event.classifications?.[0]?.segment?.name || 'Event',
-      impact: this.calculateEventImpact(capacity, eventDate)
+      impact: this.calculateEventImpact(capacity, eventDate),
+      hoursUntilEvent,
+      daysUntilEvent
+    };
+
+    // Add pre-order opportunity for events 2-7 days out
+    eventData.preOrderOpportunity = this.createPreOrderOpportunity(eventData);
+
+    return eventData;
+  }
+
+
+
+  // ADD THESE TWO NEW METHODS HERE
+  createPreOrderOpportunity(event) {
+    if (event.daysUntilEvent < 2 || event.daysUntilEvent > 7 || event.capacity <= 5000) {
+      return null;
+    }
+    
+    const urgency = event.daysUntilEvent <= 3 ? 'HIGH' : 'MEDIUM';
+    const targetOrders = Math.floor(event.capacity * 0.03);
+    
+    return {
+      isActive: true,
+      urgency,
+      targetOrders,
+      suggestedCampaign: this.getPreOrderCampaign(event),
+      estimatedRevenue: targetOrders * 25
     };
   }
+
+  getPreOrderCampaign(event) {
+    const campaigns = {
+      'HIGH': {
+        message: `${event.name} is THIS WEEK! Order now for gameday delivery`,
+        channel: 'email + SMS blast',
+        timing: 'Send immediately'
+      },
+      'MEDIUM': {
+        message: `Planning for ${event.name}? Pre-order your pizzas now!`,
+        channel: 'email campaign',
+        timing: 'Send tomorrow morning'
+      }
+    };
+    
+    const urgency = event.daysUntilEvent <= 3 ? 'HIGH' : 'MEDIUM';
+    return campaigns[urgency];
+  }
+
+
+
+
+
+  //calculate event impact
 
   calculateEventImpact(capacity, eventDate) {
     let impact = 0;
@@ -230,6 +347,28 @@ class StoreIntelligenceService {
     return Math.min(impact, 1);
   }
 
+
+  // ADD THIS NEW METHOD HERE
+  aggregateEventImpact(events) {
+    const totalCapacity = events.reduce((sum, e) => sum + e.capacity, 0);
+    const avgImpact = events.length > 0 
+      ? events.reduce((sum, e) => sum + e.impact, 0) / events.length 
+      : 0;
+    
+    return {
+      totalCapacity,
+      avgImpact,
+      isMajor: totalCapacity > 20000 || avgImpact > 0.7,
+      count: events.length
+    };
+  }
+
+
+
+
+
+  
+
   async getStoreContext(store) {
     // Get store classification
     const storeType = await this.classifyStore(store);
@@ -243,10 +382,12 @@ class StoreIntelligenceService {
       hour: localTime.getHours(),
       dayOfWeek: localTime.getDay(),
       isWeekend: localTime.getDay() === 0 || localTime.getDay() === 6,
-      isPeakTime: localTime.getHours() >= 17 && localTime.getHours() <= 20,
-      isLateNight: localTime.getHours() >= 21 || localTime.getHours() < 2
+      isPeakTime: this.isPeakHour(localTime.getHours()),
+isLateNight: this.isLateNightHour(localTime.getHours()),
+isSlowPeriod: this.isSlowPeriod(localTime.getHours(), localTime.getDay())
     };
   }
+
 
   async classifyStore(store) {
     // Check database for saved classification
@@ -259,6 +400,383 @@ class StoreIntelligenceService {
     
     return classification;
   }
+
+
+  async detectBoostWeekOpportunity(store) {
+    const cacheKey = `boost_week_${store.id}`;
+    const cached = this.getCached(cacheKey, 86400000); // 24 hour cache
+    if (cached) return cached;
+  
+    try {
+      // Get current date info
+      const now = new Date();
+      const month = now.toLocaleString('en-US', { month: 'long' }).toLowerCase();
+      const weekOfMonth = Math.ceil(now.getDate() / 7);
+      const daysSinceHoliday = await this.getDaysSinceLastHoliday(now);
+      
+      // Check for Domino's boost week patterns
+      const boostWeekIndicators = {
+        isHighProbabilityPeriod: false,
+        confidence: 0,
+        reasons: [],
+        suggestedPromotion: null
+      };
+  
+      // Pattern 1: Post-holiday slumps
+      if (daysSinceHoliday >= 5 && daysSinceHoliday <= 14) {
+        boostWeekIndicators.confidence += 30;
+        boostWeekIndicators.reasons.push('Post-holiday slowdown period');
+      }
+  
+      // Pattern 2: Known boost months
+      const boostMonths = ['january', 'april', 'august', 'november'];
+      if (boostMonths.includes(month)) {
+        boostWeekIndicators.confidence += 20;
+        
+        // Specific week patterns
+        if ((month === 'january' && weekOfMonth >= 2) ||
+            (month === 'april' && weekOfMonth >= 3) ||
+            (month === 'august' && weekOfMonth >= 4) ||
+            (month === 'november' && weekOfMonth === 1)) {
+          boostWeekIndicators.confidence += 25;
+          boostWeekIndicators.reasons.push(`Historical boost week period: ${month} week ${weekOfMonth}`);
+        }
+      }
+  
+      // Pattern 3: Check competitor activity via web search
+      const competitorPromos = await this.checkCompetitorPromotions(store);
+      if (competitorPromos.hasActivePromos) {
+        boostWeekIndicators.confidence += 20;
+        boostWeekIndicators.reasons.push('Competitors running promotions');
+      }
+  
+      // Pattern 4: Day of week - Boost weeks typically run Tue-Thu
+      const dayOfWeek = now.getDay();
+      if (dayOfWeek >= 2 && dayOfWeek <= 4) {
+        boostWeekIndicators.confidence += 5;
+      }
+  
+      // Set high probability if confidence > 50
+      boostWeekIndicators.isHighProbabilityPeriod = boostWeekIndicators.confidence > 50;
+      
+      if (boostWeekIndicators.isHighProbabilityPeriod) {
+        boostWeekIndicators.suggestedPromotion = {
+          type: '50% off menu price pizzas',
+          days: 'Tuesday-Thursday',
+          targetIncrease: '35-45% order volume',
+          urgency: boostWeekIndicators.confidence > 70 ? 'HIGH' : 'MEDIUM'
+        };
+      }
+  
+      this.setCache(cacheKey, boostWeekIndicators);
+      return boostWeekIndicators;
+  
+    } catch (error) {
+      console.error('Boost week detection error:', error);
+      return null;
+    }
+  }
+  
+  async checkCompetitorPromotions(store) {
+    try {
+      // Rate limit protection
+await this.enforceRateLimit('google');
+      
+      // Search for current pizza deals in the area
+      const searchQuery = `pizza deals promotions ${store.city} ${store.state} this week`;
+      
+      const response = await axios.get('https://www.googleapis.com/customsearch/v1', {
+        params: {
+          key: this.googleMapsKey, // Reuse Google API key
+          q: searchQuery,
+          num: 5,
+          dateRestrict: 'd7' // Last 7 days
+        }
+      });
+  
+      // Simple keyword analysis
+      const promoKeywords = ['50% off', 'half price', 'bogo', 'buy one get one', 'deal week'];
+      const competitors = ['pizza hut', 'papa johns', 'little caesars', 'marcos'];
+      
+      let hasActivePromos = false;
+      const activeCompetitors = [];
+  
+      if (response.data.items) {
+        response.data.items.forEach(item => {
+          const content = (item.title + ' ' + item.snippet).toLowerCase();
+          
+          competitors.forEach(competitor => {
+            if (content.includes(competitor)) {
+              promoKeywords.forEach(keyword => {
+                if (content.includes(keyword)) {
+                  hasActivePromos = true;
+                  activeCompetitors.push(competitor);
+                }
+              });
+            }
+          });
+        });
+      }
+  
+      return {
+        hasActivePromos,
+        competitors: [...new Set(activeCompetitors)]
+      };
+  
+    } catch (error) {
+      console.error('Competitor check error:', error);
+      return { hasActivePromos: false, competitors: [] };
+    }
+  }
+  
+  async getDaysSinceLastHoliday(date) {
+    const year = date.getFullYear();
+    
+    try {
+      const holidays = await this.getHolidaysFromAPI(year, 'US');
+      
+      let daysSince = 365;
+      holidays.forEach(holiday => {
+        const diff = Math.floor((date - holiday.date) / (1000 * 60 * 60 * 24));
+        if (diff >= 0 && diff < daysSince) {
+          daysSince = diff;
+        }
+      });
+      
+      return daysSince;
+    } catch (error) {
+      // Fallback to hardcoded holidays
+      return this.getDaysSinceLastHolidayFallback(date);
+    }
+  }
+  
+  // Add this new method right after getDaysSinceLastHoliday
+  getDaysSinceLastHolidayFallback(date) {
+    const year = date.getFullYear();
+    const holidays = [
+      new Date(year, 0, 1),    // New Year's
+      new Date(year, 1, 14),   // Valentine's Day
+      new Date(year, 4, -31 + (new Date(year, 4, 31).getDay() + 1) % 7), // Memorial Day
+      new Date(year, 6, 4),    // July 4th
+      new Date(year, 8, -31 + (new Date(year, 8, 30).getDay() + 1) % 7), // Labor Day
+      new Date(year, 9, 31),   // Halloween
+      new Date(year, 10, 23),  // Thanksgiving (4th Thursday)
+      new Date(year, 11, 25)   // Christmas
+    ];
+  
+    let daysSince = 365;
+    holidays.forEach(holiday => {
+      const diff = Math.floor((date - holiday) / (1000 * 60 * 60 * 24));
+      if (diff >= 0 && diff < daysSince) {
+        daysSince = diff;
+      }
+    });
+  
+    return daysSince;
+  }
+  
+  // Add this new method for API calls
+  async getHolidaysFromAPI(year, countryCode = 'US') {
+    const cacheKey = `holidays_${year}_${countryCode}`;
+    const cached = this.getCached(cacheKey, 86400000 * 30); // 30 day cache
+    if (cached) return cached;
+  
+    try {
+      await this.enforceRateLimit('general');
+      
+      const response = await axios.get(`https://date.nager.at/api/v3/PublicHolidays/${year}/${countryCode}`);
+      const holidays = response.data
+        .filter(h => h.types?.includes('Public') || h.nationwide) // Only public/nationwide holidays
+        .map(h => ({
+          date: new Date(h.date),
+          name: h.name,
+          localName: h.localName,
+          fixed: h.fixed
+        }));
+      
+      this.setCache(cacheKey, holidays);
+      return holidays;
+    } catch (error) {
+      console.error('Holiday API error:', error);
+      throw error; // Let the caller handle fallback
+    }
+  }
+
+  async getUpcomingHoliday(daysAhead = 7) {
+    const now = new Date();
+    const year = now.getFullYear();
+    
+    try {
+      const holidays = await this.getHolidaysFromAPI(year, 'US');
+      
+      // Check next year's holidays if we're in December
+      let allHolidays = [...holidays];
+      if (now.getMonth() === 11) { // December
+        const nextYearHolidays = await this.getHolidaysFromAPI(year + 1, 'US');
+        allHolidays = [...holidays, ...nextYearHolidays];
+      }
+      
+      // Find holidays within the next N days
+      const upcoming = allHolidays
+        .map(holiday => {
+          const daysUntil = Math.floor((holiday.date - now) / (1000 * 60 * 60 * 24));
+          return { ...holiday, daysUntil };
+        })
+        .filter(h => h.daysUntil >= 0 && h.daysUntil <= daysAhead)
+        .sort((a, b) => a.daysUntil - b.daysUntil)[0];
+      
+      if (upcoming) {
+        // Estimate impact based on holiday
+        const highImpactHolidays = ['Christmas', 'Thanksgiving', 'New Year', 'Super Bowl'];
+        const mediumImpactHolidays = ['Halloween', 'Memorial Day', 'Labor Day', 'Independence Day'];
+        
+        let expectedImpact = 20; // default
+        if (highImpactHolidays.some(h => upcoming.name.includes(h))) {
+          expectedImpact = 50;
+        } else if (mediumImpactHolidays.some(h => upcoming.name.includes(h))) {
+          expectedImpact = 35;
+        }
+        
+        return { ...upcoming, expectedImpact };
+      }
+      
+      return null;
+    } catch (error) {
+      console.error('Error checking upcoming holidays:', error);
+      return null;
+    }
+  }
+
+
+//find slow periods
+  async analyzeSlowPeriod(store) {
+    const context = this.getStoreLocalTime(store);
+    const hour = context.getHours();
+    const dayOfWeek = context.getDay();
+    const dayName = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'][dayOfWeek];
+    
+    // Define slow period patterns
+    const slowPeriods = {
+      weekday: {
+        morning: { start: 9, end: 11, impact: -40, confidence: 'high' },
+        afternoon: { start: 14, end: 16, impact: -30, confidence: 'high' },
+        lateNight: { start: 22, end: 24, impact: -50, confidence: 'medium' }
+      },
+      weekend: {
+        morning: { start: 9, end: 11, impact: -30, confidence: 'medium' },
+        afternoon: { start: 14, end: 16, impact: -15, confidence: 'low' },
+        lateNight: { start: 23, end: 24, impact: -40, confidence: 'medium' }
+      }
+    };
+  
+    const periods = dayOfWeek >= 1 && dayOfWeek <= 5 ? slowPeriods.weekday : slowPeriods.weekend;
+    let currentPeriod = null;
+    let upcomingSlowPeriod = null;
+  
+    // Check current period
+    for (const [name, period] of Object.entries(periods)) {
+      if (hour >= period.start && hour < period.end) {
+        currentPeriod = {
+          name,
+          ...period,
+          isActive: true
+        };
+      } else if (hour < period.start && !upcomingSlowPeriod) {
+        upcomingSlowPeriod = {
+          name,
+          ...period,
+          hoursUntil: period.start - hour,
+          isActive: false
+        };
+      }
+    }
+  
+    // Additional factors
+    const analysis = {
+      currentPeriod,
+      upcomingSlowPeriod,
+      dayType: dayOfWeek >= 1 && dayOfWeek <= 5 ? 'weekday' : 'weekend',
+      recommendations: []
+    };
+  
+    // Day-specific patterns
+    if (dayName === 'monday' || dayName === 'tuesday') {
+      analysis.dayImpact = -15; // Generally slower days
+      analysis.recommendations.push('Consider Monday/Tuesday specials');
+    }
+  
+    // Time-specific recommendations
+    if (currentPeriod) {
+      if (currentPeriod.name === 'afternoon') {
+        analysis.recommendations.push('Push carryout deals - afternoon special pricing');
+        analysis.recommendations.push('Reduce labor by 1-2 staff members');
+      } else if (currentPeriod.name === 'morning') {
+        analysis.recommendations.push('Focus on lunch prep and inventory');
+        analysis.recommendations.push('Run social media campaigns for lunch orders');
+      } else if (currentPeriod.name === 'lateNight') {
+        analysis.recommendations.push('Consider early close if orders < 5/hour');
+      }
+    }
+  
+    // Seasonal adjustments
+    const month = new Date().getMonth();
+    if (month >= 5 && month <= 7) { // Summer months
+      analysis.seasonalFactor = -10; // People grilling, traveling
+      analysis.recommendations.push('Summer slump: Focus on cold items, salads');
+    } else if (month === 0) { // January
+      analysis.seasonalFactor = -20; // Post-holiday diets
+      analysis.recommendations.push('New Year diets: Promote lighter options');
+    }
+  
+    return analysis;
+  }
+
+//find delivery capacity
+  async analyzeDeliveryCapacity(store, data) {
+    // Calculate current delivery capacity stress
+    const capacityAnalysis = {
+      driversAvailable: store.bookedShifts,
+      ordersPerDriverHour: 3, // Domino's standard
+      currentCapacity: store.bookedShifts * 3,
+      weatherMultiplier: 1
+    };
+  
+    // Adjust for weather impact
+    if (data.weather?.isRaining) {
+      capacityAnalysis.weatherMultiplier = 1.3; // 30% more orders
+    }
+    if (data.weather?.isSevere) {
+      capacityAnalysis.weatherMultiplier = 1.5; // 50% more orders
+    }
+  
+    // Estimate demand
+    const estimatedDemand = this.getBaselineDemand(store, data.context) * capacityAnalysis.weatherMultiplier;
+    capacityAnalysis.utilizationRate = estimatedDemand / capacityAnalysis.currentCapacity;
+    
+  
+    // Use unified carryout calculation
+    if (capacityAnalysis.utilizationRate > 0.8) {
+      capacityAnalysis.carryoutOpportunity = this.calculateCarryoutOpportunity('capacity', capacityAnalysis);
+    }
+  
+    return capacityAnalysis;
+  }
+  
+  getBaselineDemand(store, context) {
+    // Simple demand estimation based on time/day
+    let baseline = 20; // orders per hour
+    
+    if (context.isPeakTime) baseline *= 2;
+    if (context.isWeekend) baseline *= 1.3;
+    if (context.hour >= 11 && context.hour <= 13) baseline *= 1.5; // lunch rush
+    
+    return baseline;
+  }
+
+
+
+
+
 
   async getSavedClassification(storeId) {
     try {
@@ -353,12 +871,29 @@ class StoreIntelligenceService {
     return sign * (hours * 60 + minutes);
   }
 
+  // ADD THESE MISSING METHODS HERE
+  isPeakHour(hour) {
+    return hour >= 17 && hour <= 20;
+  }
+
+  isLateNightHour(hour) {
+    return hour >= 22 || hour < 2;
+  }
+
+  isSlowPeriod(hour, dayOfWeek) {
+    const isWeekday = dayOfWeek >= 1 && dayOfWeek <= 5;
+    if (isWeekday) {
+      return (hour >= 9 && hour < 11) || (hour >= 14 && hour < 16) || (hour >= 22);
+    }
+    return (hour >= 9 && hour < 11) || (hour >= 14 && hour < 16) || (hour >= 23);
+  }
+
   async generateAIInsight(store, data, context) {
     const prompt = this.buildCleanPrompt(store, data, context);
     
     try {
       // Rate limiting
-      await this.enforceRateLimit();
+await this.enforceRateLimit('general');
       
       const completion = await this.openai.chat.completions.create({
         model: this.config.ai.model || 'gpt-4',
@@ -421,19 +956,71 @@ class StoreIntelligenceService {
     if (factors.length > 0) {
       prompt.push('', 'KEY FACTORS:', ...factors.map(f => `- ${f}`));
     }
+    
+    // Add boost week specific guidance
+    if (data.boostWeek?.isHighProbabilityPeriod) {
+      prompt.push(
+        '',
+        'BOOST WEEK OPPORTUNITY:',
+        `- Confidence: ${data.boostWeek.confidence}%`,
+        `- Suggested: ${data.boostWeek.suggestedPromotion.type}`,
+        `- Expected impact: ${data.boostWeek.suggestedPromotion.targetIncrease}`
+      );
+    }
+    
+    // Add slow period specific guidance
+    if (data.slowPeriod?.currentPeriod || data.slowPeriod?.upcomingSlowPeriod) {
+      prompt.push('', 'SLOW PERIOD MANAGEMENT:');
+      if (data.slowPeriod.currentPeriod) {
+        prompt.push(`- Currently experiencing ${data.slowPeriod.currentPeriod.impact}% order decline`);
+      }
+      data.slowPeriod.recommendations?.forEach(rec => 
+        prompt.push(`- ${rec}`)
+      );
+    }
 
+    // Add carryout promotion section
+    if (data.weather?.carryoutOpportunity || data.deliveryCapacity?.carryoutOpportunity) {
+  prompt.push(
+    '',
+    'CARRYOUT PROMOTION NEEDED:',
+    `- Weather condition: ${data.weather?.condition}`,
+    `- Delivery capacity: ${data.deliveryCapacity ? Math.round(data.deliveryCapacity.utilizationRate * 100) + '%' : 'normal'}`,
+    `- Action: Push carryout with aggressive discounting`
+  );
+}
+
+// Add pre-order campaign section  
+const preOrderEvents = data.events.filter(e => e.preOrderOpportunity?.isActive);
+if (preOrderEvents.length > 0) {
+  prompt.push(
+    '',
+    'PRE-ORDER CAMPAIGNS AVAILABLE:'
+  );
+  preOrderEvents.forEach(event => {
     prompt.push(
-      '',
-      'Generate a JSON response with:',
-      '- insight: One specific, actionable recommendation (max 100 chars)',
-      '- severity: "info", "warning", or "critical"',
-      '- metrics: {',
-      '    expectedOrderIncrease: 0-100 percentage',
-      '    recommendedExtraDrivers: 0-10',
-      '    primaryReason: main factor driving this recommendation',
-      '  }',
-      '- action: What to do RIGHT NOW (max 80 chars)'
+      `- ${event.name}: ${event.preOrderOpportunity.targetOrders} potential orders`,
+      `  Campaign: "${event.preOrderOpportunity.suggestedCampaign.message}"`
     );
+  });
+}
+
+prompt.push(
+  '',
+  'Generate a JSON response with:',
+  '- insight: One specific, actionable recommendation (max 100 chars)',
+  '- severity: "info", "warning", or "critical"',
+  '- metrics: {',
+  '    expectedOrderIncrease: 0-100 percentage',
+  '    recommendedExtraDrivers: 0-10',
+  '    primaryReason: main factor driving this recommendation',
+  '    carryoutPotential: percentage of orders to redirect to carryout',
+  '    preOrderTarget: number of pre-orders to target',
+  '  }',
+  '- action: What to do RIGHT NOW (max 80 chars)',
+  '- carryoutPromotion: specific carryout offer if applicable',
+  '- preOrderCampaign: specific pre-order action if applicable'
+);
     
     return prompt.join('\n');
   }
@@ -456,14 +1043,46 @@ class StoreIntelligenceService {
     }
     
     // Event impact
-    if (data.events.length > 0) {
-      const totalCapacity = data.events.reduce((sum, e) => sum + e.capacity, 0);
-      if (totalCapacity > 20000) {
-        factors.push(`Major events with ${totalCapacity.toLocaleString()} attendees nearby`);
-      }
+    const eventImpact = this.aggregateEventImpact(data.events);
+if (eventImpact.isMajor) {
+  factors.push(`Major events with ${eventImpact.totalCapacity.toLocaleString()} attendees nearby`);
+}
+    
+    // NEW: Boost week opportunity
+    if (data.boostWeek?.isHighProbabilityPeriod) {
+      factors.push(`Boost Week opportunity detected (${data.boostWeek.confidence}% confidence)`);
+      data.boostWeek.reasons.forEach(reason => factors.push(`- ${reason}`));
     }
     
-    // Time-based patterns
+    // NEW: Slow period analysis
+    if (data.slowPeriod?.currentPeriod) {
+      factors.push(`Currently in ${data.slowPeriod.currentPeriod.name} slow period (${data.slowPeriod.currentPeriod.impact}% typical decline)`);
+    }
+    
+    if (data.slowPeriod?.upcomingSlowPeriod) {
+      factors.push(`Slow period approaching in ${data.slowPeriod.upcomingSlowPeriod.hoursUntil} hours`);
+    }
+    
+    // NEW: Carryout opportunities
+if (data.weather?.carryoutOpportunity?.isActive) {
+  factors.push(`Carryout opportunity: ${data.weather.carryoutOpportunity.reason} - push ${data.weather.carryoutOpportunity.suggestedDiscount}% off carryout`);
+  factors.push(`Expected ${data.weather.carryoutOpportunity.marginImprovement}% margin improvement vs delivery`);
+}
+
+if (data.deliveryCapacity?.carryoutOpportunity) {
+  factors.push(`Delivery at ${Math.round(data.deliveryCapacity.utilizationRate * 100)}% capacity - ${data.deliveryCapacity.carryoutOpportunity.message}`);
+}
+
+// NEW: Pre-order campaigns
+const eventsWithPreOrder = data.events.filter(e => e.preOrderOpportunity?.isActive);
+if (eventsWithPreOrder.length > 0) {
+  eventsWithPreOrder.forEach(event => {
+    factors.push(`Pre-order opportunity: ${event.name} in ${event.daysUntilEvent} days (${event.capacity} attendees)`);
+    factors.push(`- Target ${event.preOrderOpportunity.targetOrders} orders, ~$${event.preOrderOpportunity.estimatedRevenue} revenue`);
+  });
+}
+
+    // Time-based patterns (keep existing)
     if (context.isWeekend && context.isPeakTime) {
       factors.push('Weekend dinner rush - typically 25% busier');
     }
@@ -472,8 +1091,14 @@ class StoreIntelligenceService {
       factors.push('Military payday - expect 40% increase');
     }
     
+    // Check for upcoming holidays
+    if (data.upcomingHoliday) {
+      factors.push(`${data.upcomingHoliday.name} in ${data.upcomingHoliday.daysUntil} days - prepare for ${data.upcomingHoliday.expectedImpact}% increase`);
+    }
+    
     return factors;
   }
+    
 
   getSystemPrompt() {
     return `You are an AI assistant for Domino's Pizza store managers. 
@@ -493,28 +1118,50 @@ Guidelines:
       insight: String(response.insight || "Monitor operations closely").substring(0, 100),
       severity: ["info", "warning", "critical"].includes(response.severity) 
         ? response.severity : "info",
-      metrics: {
-        expectedOrderIncrease: Math.min(100, Math.max(0, 
-          Number(response.metrics?.expectedOrderIncrease) || 0)),
-        recommendedExtraDrivers: Math.min(10, Math.max(0, 
-          Math.floor(Number(response.metrics?.recommendedExtraDrivers) || 0))),
-        primaryReason: String(response.metrics?.primaryReason || "standard operations")
-      },
-      action: String(response.action || "Maintain current staffing").substring(0, 80)
+        metrics: {
+          expectedOrderIncrease: Math.min(100, Math.max(0, 
+            Number(response.metrics?.expectedOrderIncrease) || 0)),
+          recommendedExtraDrivers: Math.min(10, Math.max(0, 
+            Math.floor(Number(response.metrics?.recommendedExtraDrivers) || 0))),
+          primaryReason: String(response.metrics?.primaryReason || "standard operations"),
+          boostWeekConfidence: Number(response.metrics?.boostWeekConfidence || 0),
+          currentPeriodImpact: Number(response.metrics?.currentPeriodImpact || 0),
+          carryoutPotential: Math.min(50, Math.max(0, 
+            Number(response.metrics?.carryoutPotential) || 0)),
+          preOrderTarget: Math.max(0, 
+            Math.floor(Number(response.metrics?.preOrderTarget) || 0))
+        },
+        action: String(response.action || "Maintain current staffing").substring(0, 80),
+carryoutPromotion: response.carryoutPromotion ? {
+  discount: Number(response.carryoutPromotion.discount) || 30,
+  message: String(response.carryoutPromotion.message || "Carryout special available"),
+  duration: String(response.carryoutPromotion.duration || "Today only")
+} : null,
+preOrderCampaign: response.preOrderCampaign ? {
+  eventName: String(response.preOrderCampaign.eventName || "Upcoming event"),
+  targetOrders: Number(response.preOrderCampaign.targetOrders) || 0,
+  launchTiming: String(response.preOrderCampaign.launchTiming || "Launch today"),
+  message: String(response.preOrderCampaign.message || "Pre-order now")
+} : null,
+promotionSuggestion: response.promotionSuggestion || null,
+laborAdjustment: response.laborAdjustment || null
     };
   }
 
-  async enforceRateLimit() {
-    const now = Date.now();
-    const timeSinceLastCall = now - this.lastApiCall;
+  async enforceRateLimit(service = 'general') {
+    const limiter = this.rateLimiter[service];
+    if (!limiter) return;
     
-    if (timeSinceLastCall < this.minApiDelay) {
+    const now = Date.now();
+    const timeSinceLastCall = now - limiter.lastCall;
+    
+    if (timeSinceLastCall < limiter.minDelay) {
       await new Promise(resolve => 
-        setTimeout(resolve, this.minApiDelay - timeSinceLastCall)
+        setTimeout(resolve, limiter.minDelay - timeSinceLastCall)
       );
     }
     
-    this.lastApiCall = Date.now();
+    limiter.lastCall = Date.now();
   }
 
   getFallbackInsight(store) {
