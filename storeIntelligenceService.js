@@ -157,7 +157,7 @@ class StoreIntelligenceService {
         params: {
           apikey: tmApiKey,
           latlong: `${store.lat},${store.lng}`,
-          radius: '5',
+          radius: '25',
           unit: 'miles',
           size: 10,
           sort: 'date,asc'
