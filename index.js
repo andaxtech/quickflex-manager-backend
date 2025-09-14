@@ -951,13 +951,8 @@ const enrichedStores = await Promise.all(
     
     return {
       ...store,
-      weather: externalData.weather || (weather ? {
-        temperature: weather.temperature,
-        condition: weather.condition,
-        icon: weather.icon,
-        isRaining: weather.condition?.toLowerCase().includes('rain'),
-        isSevere: weather.condition?.toLowerCase().match(/storm|snow|blizzard/) ? true : false
-      } : null),
+      // Use the weather from external data first, fallback to weather service
+      weather: externalData.weather || weather || null,
       shifts: shiftResults[index] || { open: 0, booked: 0 },
       intelligence: intelligenceData ? {
         insight: intelligenceData.insight,
@@ -971,7 +966,7 @@ const enrichedStores = await Promise.all(
         promotionSuggestion: intelligenceData.promotionSuggestion,
         laborAdjustment: intelligenceData.laborAdjustment
       } : null,
-      // Include all external data fields
+      // Include all external data fields at top level
       events: externalData.events || [],
       traffic: externalData.traffic || null,
       deliveryCapacity: externalData.deliveryCapacity || null,
