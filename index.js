@@ -7,11 +7,9 @@ const { Pool } = require('pg');
 require('dotenv').config();
 
 const WeatherService = require('./weatherService');
-// Initialize weather service with OpenAI
-const weatherService = new WeatherService(
-  process.env.OPENWEATHER_API_KEY,
-  process.env.OPENAI_API_KEY
-);
+const StoreIntelligenceService = require('./storeIntelligenceService');
+
+
 
 const app = express();
 app.use(cors());
@@ -20,6 +18,21 @@ app.use(express.json());
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
 });
+
+
+// Initialize weather service with OpenAI
+const weatherService = new WeatherService(
+  process.env.OPENWEATHER_API_KEY,
+  process.env.OPENAI_API_KEY
+);
+
+// Initialize intelligence service
+const intelligenceService = new StoreIntelligenceService(
+  process.env.OPENAI_API_KEY,
+  process.env.GOOGLE_MAPS_API_KEY,
+  weatherService,
+  pool // Pass the database pool
+);
 
 // ✅ Health check
 app.get('/api/ping', (req, res) => {
@@ -791,44 +804,7 @@ app.get(/^\/api\/drivers\/photo\/(.*)/, async (req, res) => {
 });
 
 
-// Update the my-stores endpoint
-app.get('/api/my-stores', async (req, res) => {
-  const { managerId } = req.query;
-
-  if (!managerId) {
-    return res.status(400).json({ success: false, message: 'Missing managerId' });
-  }
-
-  try {
-    const query = `
-  SELECT 
-    l.store_id AS id, 
-    l.city, 
-    l.region as state, 
-    l.location_id AS "locationId",
-    l.time_zone_code as "timeZoneCode",
-    l.delivery_fee,
-    l.minimum_delivery_order_amount,
-    l.estimated_wait_minutes,
-    l.store_name,
-    l.is_online_now,
-    l.future_order_delay_hours,
-    l.service_hours
-  FROM manager_store_links msl
-  JOIN locations l ON msl.store_id = l.store_id
-  WHERE msl.manager_id = $1
-`;
-    const result = await pool.query(query, [managerId]);
-
-    // Fetch weather data for all stores - fix the property name mismatch
-    const storesWithCorrectId = result.rows.map(store => ({
-      ...store,
-      store_id: store.id,
-      timeZoneCode: store.timeZoneCode // Now includes timezone from query
-    }));
-const weatherMap = await weatherService.getWeatherForStores(storesWithCorrectId);
-
-    // Helper function to get shift stats
+// Helper function to get shift stats
 const getStoreShiftStats = async (locationId) => {
   try {
     const today = new Date().toISOString().split('T')[0];
@@ -857,6 +833,71 @@ const getStoreShiftStats = async (locationId) => {
   }
 };
 
+
+
+
+
+
+
+
+// Update the my-stores endpoint
+app.get('/api/my-stores', async (req, res) => {
+  const { managerId } = req.query;
+
+  if (!managerId) {
+    return res.status(400).json({ success: false, message: 'Missing managerId' });
+  }
+
+  try {
+    const query = `
+  SELECT 
+    l.store_id AS id, 
+    l.city, 
+    l.region as state, 
+    l.location_id AS "locationId",
+    l.time_zone_code as "timeZoneCode",
+    l.time_zone_minutes,
+    l.delivery_fee,
+    l.minimum_delivery_order_amount,
+    l.estimated_wait_minutes,
+    l.store_name,
+    l.is_online_now,
+    l.is_force_offline,
+    l.is_spanish,
+    l.future_order_delay_hours,
+    l.service_hours,
+    l.cash_limit,
+    l.driver_prep_secs,
+    l.driver_finish_secs,
+    l.driver_at_the_door_secs,
+    l.store_latitude,
+    l.store_longitude,
+    l.geofence_radius_meters,
+    l.driver_tracking_supported,
+    l.enhanced_dynamic_delivery_fee,
+    l.contactless_delivery,
+    l.contactless_carryout,
+    l.delivery_wait_time_reason,
+    l.carryout_wait_time_reason
+  FROM manager_store_links msl
+  JOIN locations l ON msl.store_id = l.store_id
+  WHERE msl.manager_id = $1
+`;
+    const result = await pool.query(query, [managerId]);
+
+    // Fetch weather data for all stores - fix the property name mismatch
+const storesWithCorrectId = result.rows.map(store => ({
+  ...store,
+  store_id: store.id,
+  state: store.state, // Ensure state is passed
+  timeZoneCode: store.timeZoneCode,
+  latitude: store.store_latitude,
+  longitude: store.store_longitude
+}));
+const weatherMap = await weatherService.getWeatherForStores(storesWithCorrectId);
+
+    
+
 // Get shift stats for all stores
 const shiftPromises = result.rows.map(store => 
   getStoreShiftStats(store.locationId)
@@ -864,48 +905,40 @@ const shiftPromises = result.rows.map(store =>
 const shiftResults = await Promise.all(shiftPromises);
 
 // Enrich stores with weather and shift data
-const enrichedStores = result.rows.map((store, index) => {
-  const weather = weatherMap[store.id];
-  
-  // Transform weather severity to operational impact
-  let operationalImpact = {
-    severity: 'normal',
-    todayActions: null,
-    weekOutlook: null
-  };
-  
-  if (weather && weather.severity) {
-    // Map weather severity to operational severity
-    if (weather.severity === 'critical') {
-      operationalImpact.severity = 'high';
-    } else if (weather.severity === 'warning') {
-      operationalImpact.severity = 'moderate';
+const enrichedStores = await Promise.all(
+  result.rows.map(async (store, index) => {
+    const weather = weatherMap[store.id];
+    
+    // Get full intelligence for each store (cached)
+    let intelligence = null;
+    try {
+      // Only get intelligence for stores with critical weather or low staffing
+      if (weather?.severity === 'critical' || 
+          weather?.severity === 'warning' || 
+          shiftResults[index].open > 3) {
+        intelligence = await intelligenceService.generateStoreInsight({
+          ...store,
+          shifts: shiftResults[index]
+        });
+      }
+    } catch (error) {
+      console.error(`Failed to get intelligence for store ${store.id}:`, error);
     }
     
-    // Use the AI-generated insight for today's actions
-    if (weather.insight) {
-      operationalImpact.todayActions = weather.insight;
-    }
-    
-    // Add week outlook based on metrics
-    if (weather.metrics?.expectedOrderIncrease) {
-      operationalImpact.weekOutlook = `Expect ${weather.metrics.expectedOrderIncrease}% order increase during ${weather.metrics.peakHours || 'peak hours'}`;
-    }
-  }
-  
-  return {
-    ...store,
-    weather: weather || {
-      temperature: 0,
-      condition: 'Unknown',
-      high: 0,
-      low: 0,
-      alert: undefined
-    },
-    shifts: shiftResults[index] || { open: 0, booked: 0 },
-    operationalImpact // ADD THIS
-  };
-});
+    return {
+      ...store,
+      weather: weather || {
+        temperature: 0,
+        condition: 'Unknown',
+        high: 0,
+        low: 0,
+        alert: undefined
+      },
+      shifts: shiftResults[index] || { open: 0, booked: 0 },
+      intelligence: intelligence // New field
+    };
+  })
+);
 
     res.json({ success: true, stores: enrichedStores });
   } catch (err) {
@@ -1390,6 +1423,112 @@ app.post('/api/managers/phone-signup', async (req, res) => {
     .find(layer => layer.route?.path === '/api/managers/signup')
     ?.route.stack[0].handle(modifiedReq, res);
 });
+
+
+
+
+// Store Intelligence API
+app.get('/api/stores/:storeId/intelligence', async (req, res) => {
+  const { storeId } = req.params;
+  const { managerId } = req.query;
+
+  if (!storeId || !managerId) {
+    return res.status(400).json({ 
+      success: false, 
+      message: 'Missing storeId or managerId' 
+    });
+  }
+
+  try {
+    // Verify manager has access to this store and get all store details
+    const accessQuery = `
+      SELECT 
+        l.*,
+        msl.manager_id
+      FROM locations l
+      JOIN manager_store_links msl ON l.store_id = msl.store_id
+      WHERE l.store_id = $1 AND msl.manager_id = $2
+    `;
+    const accessResult = await pool.query(accessQuery, [storeId, managerId]);
+
+    if (accessResult.rows.length === 0) {
+      return res.status(403).json({ 
+        success: false, 
+        message: 'Access denied to this store' 
+      });
+    }
+
+    const store = accessResult.rows[0];
+
+    // Get current shift stats
+    const shiftStats = await getStoreShiftStats(store.location_id);
+    store.shifts = shiftStats;
+
+    // Generate intelligence
+    const intelligence = await intelligenceService.generateStoreInsight(store);
+
+    res.json({
+      success: true,
+      storeId: storeId,
+      intelligence: intelligence
+    });
+  } catch (error) {
+    console.error('Error generating store intelligence:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Failed to generate intelligence' 
+    });
+  }
+});
+
+
+// Test intelligence endpoint
+app.get('/api/test-intelligence/:storeId', async (req, res) => {
+  const { storeId } = req.params;
+  
+  try {
+    const query = `
+      SELECT 
+        store_id,
+        city,
+        region,
+        store_latitude,
+        store_longitude,
+        estimated_wait_minutes,
+        minimum_delivery_order_amount,
+        cash_limit,
+        driver_prep_secs,
+        driver_finish_secs,
+        driver_at_the_door_secs,
+        is_online_now,
+        is_force_offline,
+        is_spanish,
+        time_zone_code,
+        time_zone_minutes
+      FROM locations 
+      WHERE store_id = $1
+    `;
+    
+    const store = await pool.query(query, [storeId]);
+    
+    if (store.rows.length === 0) {
+      return res.status(404).json({ error: 'Store not found' });
+    }
+    
+    const intelligence = await intelligenceService.generateStoreInsight(store.rows[0]);
+    
+    res.json({
+      success: true,
+      storeData: store.rows[0],
+      intelligence
+    });
+  } catch (error) {
+    console.error('Test error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+
 
 const PORT = process.env.PORT || 5003;
 app.listen(PORT, () => {
