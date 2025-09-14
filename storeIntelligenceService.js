@@ -274,7 +274,7 @@ class StoreIntelligenceService {
       const params = {
         apikey: tmApiKey,
         latlong: `${store.store_latitude},${store.store_longitude}`,
-        radius: '15',
+        radius: '5',
         unit: 'miles',
         startDateTime: now.toISOString().split('.')[0] + 'Z',
         endDateTime: endDate.toISOString().split('.')[0] + 'Z',
@@ -367,6 +367,9 @@ class StoreIntelligenceService {
     
     // Process events more cleanly
     const eventContext = this.processEventsForPrompt(data.events);
+
+    // Analyze multiple factors for insights
+const insightFactors = this.analyzeMultipleFactors(data, localHour, localDate);
     
     // Build a focused, clear prompt
     const prompt = [
@@ -381,6 +384,18 @@ class StoreIntelligenceService {
       `CURRENT CONDITIONS:`
     ];
   
+
+    // Add multi-factor insights
+    const factors = insightFactors;
+    if (factors.length > 0) {
+      prompt.push(``,
+        `COMPOUND FACTORS DETECTED:`,
+        ...factors.map(f => `- ${f}`),
+        ``
+      );
+    }
+
+
     // Add weather if available
     if (data.weather) {
       prompt.push(`- Weather: ${data.weather.temperature}°F, ${data.weather.condition}`);
@@ -397,10 +412,14 @@ class StoreIntelligenceService {
       prompt.push(`- Upcoming Holidays: ${holidayNames}`);
     }
   
-    // Add events
-    if (eventContext.hasEvents) {
-      prompt.push(`- Local Events: ${eventContext.summary}`);
-    }
+    // Add events with enhanced details
+if (eventContext.hasEvents) {
+  const enhancedEvents = this.enhanceEventDetails(data.events);
+  const eventDetails = enhancedEvents.map(e => 
+    `${e.fullDescription} starting ${e.startTime}, ending ~${e.estimatedEndTime} (${e.crowdImpact})`
+  ).join('; ');
+  prompt.push(`- Local Events: ${eventDetails}`);
+}
   
     prompt.push(
       ``,
@@ -412,13 +431,15 @@ class StoreIntelligenceService {
     );
   
     // Time-based action rules (simplified)
-    if (isLateEvening) {
-      prompt.push(
-        `TIME CONSTRAINT: It's late evening (after 8 PM).`,
-        `- Focus on: immediate staffing, quality control, closing prep`,
-        `- Avoid: promotions, next-day planning, marketing`,
-        ``
-      );
+if (isLateEvening) {
+  prompt.push(
+    `TIME CONSTRAINT: It's late evening (after 8 PM) - ${localDate.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}.`,
+    `- Focus on: managing current staff, extending shifts, quality control`,
+    `- Can only suggest: reallocating existing staff, calling in on-call drivers`,
+    `- CANNOT suggest: booking new shifts, promotions, prep for tomorrow`,
+    `- Remaining hours: Store likely closes at 11 PM or midnight`,
+    ``
+  );
     } else if (isEvening) {
       prompt.push(
         `TIME CONSTRAINT: It's evening (6-8 PM).`,
@@ -437,7 +458,7 @@ class StoreIntelligenceService {
     prompt.push(
       `GENERATE JSON RESPONSE:`,
       `{`,
-      `  "insight": "One specific action addressing the highest-impact factor (max 100 chars)",`,
+      `  "insight": "Connect multiple factors for non-obvious impact (e.g., 'Lakers game + rain = 60% surge, extend all shifts')",`,
       `  "severity": "info" OR "warning" OR "critical",`,
       `  "metrics": {`,
       `    "expectedOrderIncrease": 0-100 (percentage),`,
@@ -445,12 +466,22 @@ class StoreIntelligenceService {
       `    "peakHours": "HH-HH" format or null,`,
       `    "primaryReason": "the main factor driving this recommendation"`,
       `  },`,
-      `  "todayActions": "Action executable RIGHT NOW given current time (max 80 chars)",`,
+      `  "todayActions": "What manager can do THIS INSTANT at ${localDate.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}",`,
       `  "weekOutlook": "5-day forecast with specific dates/events (max 100 chars)"`,
       `}`,
       ``,
       `PRIORITY ORDER FOR DECISIONS:`,
-      `1. Major events (sports/concerts) within 15 miles`,
+      `1. Multiple simultaneous factors (event + weather + traffic)`,
+      `2. Event timing collisions (multiple venues letting out together)`,
+      `3. Major single events within 5 miles`,
+      `4. Severe weather conditions`,
+      `5. Traffic delays over 15 minutes`,
+      ``,
+      `INSIGHT REQUIREMENTS:`,
+      `- Connect 2+ factors when they compound each other`,
+      `- Mention specific roads/exits for traffic impacts`,
+      `- Note when multiple events end at same time`,
+      `- Include historical patterns when relevant (e.g., "Friday rain typically +40% orders")`,
       `2. Severe weather conditions`,
       `3. Traffic delays over 15 minutes`,
       `4. Holidays in next 3 days`,
@@ -484,6 +515,68 @@ class StoreIntelligenceService {
     };
   }
   
+// Helper to make events more detailed for the prompt
+enhanceEventDetails(events) {
+  if (!events || events.length === 0) return [];
+  
+  return events.map(event => {
+    const eventDate = new Date(event.date);
+    const eventTime = event.time || '19:00:00';
+    const [hours, minutes] = eventTime.split(':');
+    const eventEndTime = parseInt(hours) + 3; // Assume 3-hour events
+    
+    return {
+      ...event,
+      fullDescription: `${event.name} at ${event.venue} (${event.type})`,
+      startTime: `${parseInt(hours) > 12 ? parseInt(hours) - 12 : hours}:${minutes} ${parseInt(hours) >= 12 ? 'PM' : 'AM'}`,
+      estimatedEndTime: `${eventEndTime > 12 ? eventEndTime - 12 : eventEndTime}:00 ${eventEndTime >= 12 ? 'PM' : 'AM'}`,
+      crowdImpact: event.capacity > 10000 ? 'major event - expect high demand' : 
+             event.capacity > 5000 ? 'medium event - expect increased orders' : 
+             'local event - some impact expected'
+    };
+  });
+}
+
+
+analyzeMultipleFactors(data, localHour, localDate) {
+  const factors = [];
+  
+  // Check for event collisions
+  if (data.events && data.events.length > 1) {
+    const sameTimeEvents = data.events.filter(e => {
+      const eventTime = new Date(e.date + ' ' + e.time);
+      return Math.abs(eventTime.getHours() - localHour) < 2;
+    });
+    
+    if (sameTimeEvents.length > 1) {
+      factors.push(`Multiple events ending simultaneously: ${sameTimeEvents.map(e => e.name).join(' + ')}`);
+    }
+  }
+  
+  // Weather + event combo
+  if (data.weather && data.events && data.events.length > 0) {
+    if (data.weather.condition.toLowerCase().includes('rain')) {
+      factors.push(`Rain + ${data.events[0].name} = perfect storm conditions`);
+    }
+  }
+  
+  // Traffic + specific routes
+  if (data.traffic && data.traffic.delayMinutes > 15) {
+    factors.push(`Major traffic delays (${data.traffic.delayMinutes} min) affecting driver routes`);
+  }
+  
+  // Day of week patterns
+  const dayName = localDate.toLocaleDateString('en-US', { weekday: 'long' });
+  if (dayName === 'Friday' && data.events && data.events.length > 0) {
+    factors.push(`Friday night + events = compound surge expected`);
+  }
+  
+  return factors;
+}
+
+
+
+
 
   async retryOpenAI(fn, retries = 2) {
     try {
