@@ -1,13 +1,17 @@
+// Add this at the very top of your file to help debug
+console.log('Loading StoreIntelligenceService...');
+
 const axios = require('axios');
 const OpenAI = require('openai');
 const config = require('./intelligenceConfig');
 
 class StoreIntelligenceService {
   constructor(openAIKey, googleMapsKey, weatherService, dbPool) {
+    console.log('Initializing StoreIntelligenceService...');
     this.openai = new OpenAI({ apiKey: openAIKey });
     this.googleMapsKey = googleMapsKey;
     this.weatherService = weatherService;
-    this.dbPool = dbPool; // Add database connection
+    this.dbPool = dbPool;
     this.cache = new Map();
     this.config = config;
   }
@@ -183,8 +187,7 @@ class StoreIntelligenceService {
     return 'light';
   }
 
-
-  //analyze holidays
+  // analyze holidays
   async getHolidays() {
     const cacheKey = 'holidays_US';
     const cached = this.getCached(cacheKey, this.config.cache.holidays);
@@ -208,8 +211,8 @@ class StoreIntelligenceService {
     }
   }
 
-//analyze local events
-async getLocalEvents(store) {
+  // analyze local events
+  async getLocalEvents(store) {
     const cacheKey = `events_${store.store_id}`;
     const cached = this.getCached(cacheKey, this.config.cache.events || 3600000); // 1 hour cache
     if (cached) return cached;
@@ -303,14 +306,6 @@ async getLocalEvents(store) {
     return Math.min(impact, 1); // Cap at 1
   }
 
-
-
-
-
-
-
-
-
   async generateAIInsight(store, data) {
     const prompt = this.buildIntelligencePrompt(store, data);
     
@@ -330,7 +325,7 @@ async getLocalEvents(store) {
     }
   }
 
-  async buildIntelligencePrompt(store, data) {
+  buildIntelligencePrompt(store, data) {
     const now = new Date();
     const localTime = this.getStoreLocalTime(store);
     const baselines = await this.getStoreBaselines(store.store_id);
@@ -340,40 +335,40 @@ async getLocalEvents(store) {
       ? data.events.map(e => `${e.date}: ${e.name} at ${e.venue} (${e.type})`).join('; ')
       : 'No major events';
     
-      return `You are Domino's Store Mentor. Generate ONE actionable insight for store ${store.store_id}.
+    return `You are Domino's Store Mentor. Generate ONE actionable insight for store ${store.store_id}.
 
-      Store Context:
-      - Location: ${store.city}, ${store.region || store.state}
-      - Type: ${data.storeType.type}
-      - Local Time: ${localTime}
-      - Open Shifts: ${store.shifts?.open || 0}
-      - Booked Shifts: ${store.shifts?.booked || 0}
-      
-      Current Data:
-      - Weather: ${data.weather ? data.weather.temperature + '°F, ' + data.weather.condition : 'unavailable'}
-      - Traffic: ${data.traffic ? data.traffic.delayMinutes + ' min delays' : 'normal'}
-      - Holidays (next 7 days): ${data.holidays?.slice(0,3).map(h => h.name).join(', ') || 'none'}
-      - Local Events: ${eventsSummary}
-      
-      ${data.events && data.events.length > 0 ? 'EVENT IMPACT: Major events detected nearby that will drive pizza demand.' : ''}
-      
-      Baselines:
-      - Delivery: ${baselines.delivery.min}-${baselines.delivery.max} minutes
-      - Carryout: ${baselines.carryout.min}-${baselines.carryout.max} minutes
-      - Min delivery: $${baselines.minOrder}
-      
-      Return JSON with:
-      {
-        "insight": "specific action for NOW (max 100 chars)",
-        "severity": "info|warning|critical",
-        "metrics": {
-          "expectedOrderIncrease": percentage,
-          "recommendedExtraDrivers": number,
-          "peakHours": "17-20" or null
-        },
-        "todayActions": "what to do TODAY (max 80 chars)",
-        "weekOutlook": "5-day forecast impact (max 80 chars)"
-      }`;
+    Store Context:
+    - Location: ${store.city}, ${store.region || store.state}
+    - Type: ${data.storeType.type}
+    - Local Time: ${localTime}
+    - Open Shifts: ${store.shifts?.open || 0}
+    - Booked Shifts: ${store.shifts?.booked || 0}
+    
+    Current Data:
+    - Weather: ${data.weather ? data.weather.temperature + '°F, ' + data.weather.condition : 'unavailable'}
+    - Traffic: ${data.traffic ? data.traffic.delayMinutes + ' min delays' : 'normal'}
+    - Holidays (next 7 days): ${data.holidays?.slice(0,3).map(h => h.name).join(', ') || 'none'}
+    - Local Events: ${eventsSummary}
+    
+    ${data.events && data.events.length > 0 ? 'EVENT IMPACT: Major events detected nearby that will drive pizza demand.' : ''}
+    
+    Baselines:
+    - Delivery: ${baselines.delivery.min}-${baselines.delivery.max} minutes
+    - Carryout: ${baselines.carryout.min}-${baselines.carryout.max} minutes
+    - Min delivery: $${baselines.minOrder}
+    
+    Return JSON with:
+    {
+      "insight": "specific action for NOW (max 100 chars)",
+      "severity": "info|warning|critical",
+      "metrics": {
+        "expectedOrderIncrease": percentage,
+        "recommendedExtraDrivers": number,
+        "peakHours": "17-20" or null
+      },
+      "todayActions": "what to do TODAY (max 80 chars)",
+      "weekOutlook": "5-day forecast impact (max 80 chars)"
+    }`;
   }
 
   async getStoreBaselines(storeId) {
@@ -450,7 +445,7 @@ async getLocalEvents(store) {
     };
   }
 
-  // Helper methods remain the same...
+  // Helper methods
   getCached(key, ttl) {
     const cached = this.cache.get(key);
     if (!cached) return null;
@@ -500,4 +495,5 @@ async getLocalEvents(store) {
   }
 }
 
+console.log('StoreIntelligenceService loaded successfully');
 module.exports = StoreIntelligenceService;
