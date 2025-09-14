@@ -303,7 +303,8 @@ const dayOfWeek = dayNames[storeLocalTime.getUTCDay()];
 const hour = storeLocalTime.getUTCHours();
 
 
-//this is the part that makes Business intelligence reccomendationsconst forecastSummary = forecastData ? 
+// This is the part that makes Business intelligence recommendations
+const forecastSummary = forecastData ? 
       forecastData.map(day => 
         `${day.date}: ${day.high}°F/${day.low}°F, ${day.conditions.join('/')}${day.significantWeather ? ' ⚠️' : ''}`
       ).join('\n') : 'No forecast available';
