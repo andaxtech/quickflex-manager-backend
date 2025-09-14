@@ -26,7 +26,7 @@ class StoreIntelligenceService {
       if (!this.validateStore(normalizedStore)) {
         return this.getFallbackInsight(normalizedStore);
       }
-
+  
       // Collect external data in parallel
       const externalData = await this.collectExternalData(normalizedStore);
       
@@ -34,7 +34,14 @@ class StoreIntelligenceService {
       const storeContext = await this.getStoreContext(normalizedStore);
       
       // Generate AI insight with clean, focused data
-      return await this.generateAIInsight(normalizedStore, externalData, storeContext);
+      const insight = await this.generateAIInsight(normalizedStore, externalData, storeContext);
+      
+      // Return both insight and raw data
+      return {
+        ...insight,
+        // Include the raw external data for the frontend
+        _externalData: externalData
+      };
       
     } catch (error) {
       console.error('Error generating store insight:', error);
@@ -66,6 +73,8 @@ class StoreIntelligenceService {
   }
 
   async collectExternalData(store) {
+    console.log(`📊 Collecting external data for store ${store.id}...`);
+    
     const [weather, traffic, events, boostWeek, slowPeriod] = await Promise.allSettled([
       this.getWeatherData(store),
       this.getTrafficData(store),
@@ -73,6 +82,13 @@ class StoreIntelligenceService {
       this.detectBoostWeekOpportunity(store),
       this.analyzeSlowPeriod(store)
     ]);
+    
+    // Log what we got
+    console.log(`✅ Weather data:`, weather.status === 'fulfilled' ? 'Success' : 'Failed');
+    console.log(`✅ Traffic data:`, traffic.status === 'fulfilled' ? 'Success' : 'Failed');
+    console.log(`✅ Events data:`, events.status === 'fulfilled' ? 'Success' : 'Failed');
+    console.log(`✅ Boost week:`, boostWeek.status === 'fulfilled' ? 'Success' : 'Failed');
+    console.log(`✅ Slow period:`, slowPeriod.status === 'fulfilled' ? 'Success' : 'Failed');
   
     const collectedData = {
       weather: weather.status === 'fulfilled' ? weather.value : null,
@@ -893,7 +909,7 @@ await this.enforceRateLimit('google');
     
     try {
       // Rate limiting
-await this.enforceRateLimit('general');
+      await this.enforceRateLimit('general');
       
       const completion = await this.openai.chat.completions.create({
         model: this.config.ai.model || 'gpt-4',
@@ -913,11 +929,22 @@ await this.enforceRateLimit('general');
       });
 
       const response = JSON.parse(completion.choices[0].message.content);
-      return this.validateResponse(response);
+      const validatedResponse = this.validateResponse(response);
+      
+      // Return both the AI insight AND the raw external data
+      return {
+        ...validatedResponse,
+        externalData: data,
+        context: context
+      };
       
     } catch (error) {
       console.error('AI generation error:', error);
-      return this.getFallbackInsight(store);
+      return {
+        ...this.getFallbackInsight(store),
+        externalData: data || {},
+        context: context || {}
+      };
     }
   }
 

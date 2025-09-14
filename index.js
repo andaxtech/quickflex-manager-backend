@@ -20,6 +20,32 @@ const pool = new Pool({
 });
 
 
+
+// Validate required API keys
+const requiredKeys = {
+  OPENAI_API_KEY: process.env.OPENAI_API_KEY,
+  GOOGLE_MAPS_API_KEY: process.env.GOOGLE_MAPS_API_KEY,
+  TICKETMASTER_API_KEY: process.env.TICKETMASTER_API_KEY,
+  OPENWEATHER_API_KEY: process.env.OPENWEATHER_API_KEY
+};
+
+console.log('🔑 API Key Status:');
+Object.entries(requiredKeys).forEach(([key, value]) => {
+  console.log(`  ${key}: ${value ? '✅ Configured' : '❌ Missing'}`);
+});
+
+// Log if we're missing critical keys
+const missingKeys = Object.entries(requiredKeys)
+  .filter(([_, value]) => !value)
+  .map(([key]) => key);
+
+if (missingKeys.length > 0) {
+  console.warn('⚠️  Missing API keys will limit intelligence features:', missingKeys.join(', '));
+}
+
+
+
+
 // Initialize weather service with OpenAI
 const weatherService = new WeatherService(
   process.env.OPENWEATHER_API_KEY,
@@ -909,32 +935,49 @@ const enrichedStores = await Promise.all(
   result.rows.map(async (store, index) => {
     const weather = weatherMap[store.id];
     
-    // Get full intelligence for each store (cached)
-    let intelligence = null;
+    // Get full intelligence for each store
+    let intelligenceData = null;
     try {
-      // Always get intelligence in test mode
-intelligence = await intelligenceService.generateStoreInsight({
-  ...store,
-  shifts: shiftResults[index]
-});
+      intelligenceData = await intelligenceService.generateStoreInsight({
+        ...store,
+        shifts: shiftResults[index]
+      });
     } catch (error) {
       console.error(`Failed to get intelligence for store ${store.id}:`, error);
     }
     
+    // Extract external data from intelligence response (_externalData from your updated service)
+    const externalData = intelligenceData?._externalData || {};
+    
     return {
       ...store,
-      weather: weather ? {
+      weather: externalData.weather || (weather ? {
         temperature: weather.temperature,
         condition: weather.condition,
-        icon: weather.icon
-        // DO NOT include insight, severity, metrics, etc. here
-      } : {
-        temperature: 0,
-        condition: 'Unknown',
-        icon: undefined
-      },
+        icon: weather.icon,
+        isRaining: weather.condition?.toLowerCase().includes('rain'),
+        isSevere: weather.condition?.toLowerCase().match(/storm|snow|blizzard/) ? true : false
+      } : null),
       shifts: shiftResults[index] || { open: 0, booked: 0 },
-      intelligence: intelligence
+      intelligence: intelligenceData ? {
+        insight: intelligenceData.insight,
+        severity: intelligenceData.severity,
+        metrics: intelligenceData.metrics,
+        action: intelligenceData.action,
+        todayActions: intelligenceData.todayActions,
+        weekOutlook: intelligenceData.weekOutlook,
+        carryoutPromotion: intelligenceData.carryoutPromotion,
+        preOrderCampaign: intelligenceData.preOrderCampaign,
+        promotionSuggestion: intelligenceData.promotionSuggestion,
+        laborAdjustment: intelligenceData.laborAdjustment
+      } : null,
+      // Include all external data fields
+      events: externalData.events || [],
+      traffic: externalData.traffic || null,
+      deliveryCapacity: externalData.deliveryCapacity || null,
+      boostWeek: externalData.boostWeek || null,
+      slowPeriod: externalData.slowPeriod || null,
+      upcomingHoliday: externalData.upcomingHoliday || null
     };
   })
 );
