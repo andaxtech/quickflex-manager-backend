@@ -416,16 +416,17 @@ calculateCarryoutOpportunity(trigger, data) {
       const ebToken = process.env.EVENTBRITE_TOKEN;
       if (!ebToken) return [];
 
-      const response = await axios.get('https://www.eventbriteapi.com/v3/events/search/', {
+      const response = await axios.get('https://www.eventbriteapi.com/v3/events/search', {  // Remove trailing slash
         headers: {
-          'Authorization': `Bearer ${ebToken}`
+          'Authorization': `Bearer ${ebToken}`,
+          'Accept': 'application/json'
         },
         params: {
           'location.latitude': store.lat,
           'location.longitude': store.lng,
           'location.within': '25mi',
-          'start_date.range_start': new Date().toISOString(),
-          'start_date.range_end': new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString()
+          'start_date.range_start': new Date().toISOString().split('.')[0] + 'Z',  // Format: 2025-09-14T20:10:30Z
+          'start_date.range_end': new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split('.')[0] + 'Z'
         }
       });
 
