@@ -604,7 +604,7 @@ calculateCarryoutOpportunity(trigger, data) {
       isToday,
       isPastToday: hoursUntilEvent < 0 && hoursUntilEvent >= -12,
       
-      // NEW: Specific timing insights
+      // Specific timing insights
       preEventWindow: {
         start: new Date(eventDate.getTime() - (3 * 60 * 60 * 1000)), // 3 hours before
         end: new Date(eventDate.getTime() - (30 * 60 * 1000)), // 30 min before
@@ -1203,13 +1203,6 @@ getStaffingRecommendation(analysis) {
     
     // Fix: Don't add getTimezoneOffset(), just apply the store's offset directly
     const storeTime = new Date(now.getTime() + (offset * 60 * 1000));
-    
-    console.log(`Store ${store.id} time calc:`, {
-      utc: now.toISOString(),
-      offset: offset,
-      localTime: storeTime.toISOString(),
-      formatted: storeTime.toLocaleString()
-    });
     
     return storeTime;
   }
