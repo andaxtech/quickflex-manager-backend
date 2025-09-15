@@ -292,6 +292,12 @@ const response = await axios.get('https://app.ticketmaster.com/discovery/v2/even
 
       console.log(`✅ Filtered to ${events.length} relevant events`);
 
+      console.log('Ticketmaster date params:', {
+        storeTimezone: store.timezone,
+        startDateTimeUTC: startDateTimeUTC.toISOString(),
+        endDateTimeUTC: endDateTimeUTC.toISOString()
+      });
+
       // Debug event times
         events.forEach(event => {
           console.log(`Event: ${event.name} at ${event.venue}`);
@@ -438,22 +444,22 @@ const response = await axios.get('https://app.ticketmaster.com/discovery/v2/even
           time: timeStr,
           capacity: event.venue.capacity || 5000,
           type: event.type,
-          impact: this.calculateEventImpact(event.venue.capacity || 5000, eventDateLocal),
+          impact: this.calculateEventImpact(event.venue.capacity || 5000, eventDateUTC),
           hoursUntilEvent,
           daysUntilEvent: Math.floor(hoursUntilEvent / 24),
           isToday,
           isPastToday: isToday && hoursUntilEvent < 0,
           source: 'seatgeek',
           preEventWindow: {
-            start: new Date(eventDateLocal.getTime() - (3 * 60 * 60 * 1000)),
-            end: new Date(eventDateLocal.getTime() - (30 * 60 * 1000)),
+            start: new Date(eventDateUTC.getTime() - (3 * 60 * 60 * 1000)),
+            end: new Date(eventDateUTC.getTime() - (30 * 60 * 1000)),
             expectedOrders: Math.floor((event.venue.capacity || 5000) * 0.005),
             staffingNeeded: Math.ceil(((event.venue.capacity || 5000) * 0.005) / 20)
           },
           postEventWindow: {
-            start: eventDateLocal,
-            end: new Date(eventDateLocal.getTime() + (2 * 60 * 60 * 1000)),
-            peakTime: new Date(eventDateLocal.getTime() + (45 * 60 * 1000)),
+            start: eventDateUTC,
+            end: new Date(eventDateUTC.getTime() + (2 * 60 * 60 * 1000)),
+            peakTime: new Date(eventDateUTC.getTime() + (45 * 60 * 1000)),
             expectedOrders: Math.floor((event.venue.capacity || 5000) * 0.01),
             staffingNeeded: Math.ceil(((event.venue.capacity || 5000) * 0.01) / 15)
           }
@@ -525,7 +531,16 @@ const response = await axios.get('https://app.ticketmaster.com/discovery/v2/even
             name: event.name.text,
             venue: event.venue?.name || 'TBD',
             date: eventDate,
-            time: this.formatEventTime(eventDate, store),
+            time: (() => {
+              const offsetMinutes = this.parseTimezoneOffset(store.timezone);
+              const eventStoreMs = eventDate.getTime() + (offsetMinutes * 60 * 1000);
+              const eventStoreDate = new Date(eventStoreMs);
+              const hours = eventStoreDate.getHours();
+              const minutes = eventStoreDate.getMinutes();
+              const isPM = hours >= 12;
+              const displayHours = hours === 0 ? 12 : hours > 12 ? hours - 12 : hours;
+              return `${displayHours}:${minutes.toString().padStart(2, '0')} ${isPM ? 'PM' : 'AM'}`;
+            })(),
             capacity: capacity,
             type: 'Event',
             impact: this.calculateEventImpact(capacity, eventDate),
@@ -768,6 +783,13 @@ const response = await axios.get('https://app.ticketmaster.com/discovery/v2/even
     // Get store classification
     const storeType = await this.classifyStore(store);
     
+    // Debug log
+    console.log('Store timezone info:', {
+      id: store.id,
+      timezone: store.timezone,
+      storeObject: store
+    });
+    
     // Get current time in store's timezone
     const localTime = this.getStoreLocalTime(store);
     
@@ -778,8 +800,9 @@ const response = await axios.get('https://app.ticketmaster.com/discovery/v2/even
       dayOfWeek: localTime.getDay(),
       isWeekend: localTime.getDay() === 0 || localTime.getDay() === 6,
       isPeakTime: this.isPeakHour(localTime.getHours()),
-isLateNight: this.isLateNightHour(localTime.getHours()),
-isSlowPeriod: this.isSlowPeriod(localTime.getHours(), localTime.getDay())
+      isLateNight: this.isLateNightHour(localTime.getHours()),
+      isSlowPeriod: this.isSlowPeriod(localTime.getHours(), localTime.getDay()),
+      timezone: store.timezone
     };
   }
 
