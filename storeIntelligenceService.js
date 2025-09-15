@@ -275,20 +275,36 @@ const response = await axios.get('https://app.ticketmaster.com/discovery/v2/even
       });
 
       const processedEvents = response.data._embedded.events
-  .map(event => this.processEvent(event, store));
+        .map(event => this.processEvent(event, store))
+        .filter(event => {
+          // Validate distance
+          const venue = event.venue;
+          if (venue && venue.location?.latitude && venue.location?.longitude) {
+            const distance = this.calculateDistance(
+              store.lat, 
+              store.lng, 
+              parseFloat(venue.location.latitude), 
+              parseFloat(venue.location.longitude)
+            );
+            if (distance > 25) {
+              console.log(`⚠️ Filtering out distant event: ${event.name} at ${venue} (${distance.toFixed(1)} miles away)`);
+              return false;
+            }
+          }
+          return true;
+        });
 
       // Log impact scores
       console.log('📊 Event impact scores:');
       processedEvents.forEach(e => {
-        
+        console.log(`  - ${e.name}: Impact ${e.impact.toFixed(2)}`);
       });
 
       const events = processedEvents
         .filter(event => {
-          // Lower threshold to catch more events
           return event.impact >= 0.3 || event.isToday;
         })
-        .slice(0, 10); // Show more events
+        .slice(0, 10);
 
       console.log(`✅ Filtered to ${events.length} relevant events`);
 
@@ -625,6 +641,10 @@ const response = await axios.get('https://app.ticketmaster.com/discovery/v2/even
   processEvent(event, store) {
     const venue = event._embedded?.venues?.[0];
     const capacity = parseInt(venue?.capacity) || 5000;
+    
+    // Add venue location to the processed event
+    const venueLat = venue?.location?.latitude;
+    const venueLng = venue?.location?.longitude;
     
     // Parse event date as UTC
     const eventDateUTC = new Date(event.dates.start.dateTime);
@@ -1282,7 +1302,6 @@ await this.enforceRateLimit('google');
 
 
   simplifyTimeFormat(timeStr) {
-    // Convert "11:36 PM" to "11:30pm" (round to nearest 15 min)
     const match = timeStr.match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i);
     if (!match) return timeStr;
     
@@ -1290,18 +1309,28 @@ await this.enforceRateLimit('google');
     let minutes = parseInt(match[2]);
     const period = match[3].toLowerCase();
     
-    // Round to nearest 15 minutes
-    minutes = Math.round(minutes / 15) * 15;
-    if (minutes === 60) {
+    // Round to nearest 30 minutes for cleaner times
+    if (minutes < 15) {
+      minutes = 0;
+    } else if (minutes < 45) {
+      minutes = 30;
+    } else {
       hours += 1;
       minutes = 0;
     }
     
+    // Handle hour overflow
+    if (hours > 12) {
+      hours = hours - 12;
+    } else if (hours === 0) {
+      hours = 12;
+    }
+    
     // Format simply
     if (minutes === 0) {
-      return `${hours}${period}`;
+      return `${hours}:00${period}`;
     } else {
-      return `${hours}:${minutes.toString().padStart(2, '0')}${period}`;
+      return `${hours}:30${period}`;
     }
   }
 
@@ -1409,6 +1438,12 @@ await this.enforceRateLimit('google');
       if (todayEvents.length > 0) {
         prompt.push(``, `TODAY'S EVENTS REQUIRING ACTION:`);
         todayEvents.forEach(event => {
+          // Add distance calculation if venue coordinates available
+          let distanceStr = '';
+          if (event.venue && event.venueLat && event.venueLng) {
+            const distance = this.calculateDistance(store.lat, store.lng, event.venueLat, event.venueLng);
+            distanceStr = ` (${distance.toFixed(1)} miles away)`;
+          }
           if (event.hoursUntilEvent > 0) {
             // Check if event has the window data before accessing it
             if (event.preEventWindow && event.postEventWindow) {
@@ -1684,8 +1719,10 @@ if (event.date.getDay() >= 1 && event.date.getDay() <= 4) {
   
   CRITICAL INSIGHT RULES:
   - Always name specific events by name (e.g., "Lakers game", not "sporting event")
-  - Use simple time format (e.g., "11:30pm", not "23:36")
-  - Round times to nearest 15 minutes for simplicity (e.g., "12:15pm" not "12:08pm")
+  - Use simple time format with :00 or :30 only (e.g., "11:30pm", "2:00pm", never "2:18pm")
+  - ALWAYS round times to :00 or :30 for ALL mentions
+  - When multiple events end around the same time, say "around 1:00pm" not specific minutes
+  - Include event location and distance in insights (e.g., "Lakers game in LA (95 miles)")
 - When referring to general time periods, use natural language like "around noon" or "early afternoon"
   - Write like you're texting a manager, not writing a thesis
   - Maximum 3 key facts per insight
