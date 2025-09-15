@@ -404,23 +404,38 @@ const response = await axios.get('https://app.ticketmaster.com/discovery/v2/even
   
       return response.data.events.map(event => {
         const eventDateUTC = new Date(event.datetime_utc);
-        const eventDateLocal = this.getStoreLocalDate(eventDateUTC, store);
-        const storeNowLocal = this.getStoreCurrentDate(store);
-        const hoursUntilEvent = (eventDateLocal - storeNowLocal) / (1000 * 60 * 60);
-        
-        // Check if today in store timezone
-        const storeToday = new Date(storeNowLocal);
-        storeToday.setHours(0, 0, 0, 0);
-        const eventDay = new Date(eventDateLocal);
-        eventDay.setHours(0, 0, 0, 0);
-        const isToday = eventDay.getTime() === storeToday.getTime();
+          const nowUTC = new Date();
+
+          // Calculate hours until event (both in UTC)
+          const hoursUntilEvent = (eventDateUTC - nowUTC) / (1000 * 60 * 60);
+
+          // Check if today in store timezone
+          const offsetMinutes = this.parseTimezoneOffset(store.timezone);
+          const nowMs = nowUTC.getTime();
+          const storeNowMs = nowMs + (offsetMinutes * 60 * 1000);
+          const storeToday = new Date(storeNowMs);
+          storeToday.setHours(0, 0, 0, 0);
+          const todayStartUTC = new Date(storeToday.getTime() - (offsetMinutes * 60 * 1000));
+          const tomorrowStartUTC = new Date(todayStartUTC.getTime() + (24 * 60 * 60 * 1000));
+
+          const isToday = eventDateUTC >= todayStartUTC && eventDateUTC < tomorrowStartUTC;
+          const isPastToday = isToday && hoursUntilEvent < 0;
+
+          // Format time in store timezone
+          const eventStoreMs = eventDateUTC.getTime() + (offsetMinutes * 60 * 1000);
+          const eventStoreDate = new Date(eventStoreMs);
+          const hours = eventStoreDate.getHours();
+          const minutes = eventStoreDate.getMinutes();
+          const isPM = hours >= 12;
+          const displayHours = hours === 0 ? 12 : hours > 12 ? hours - 12 : hours;
+          const timeStr = `${displayHours}:${minutes.toString().padStart(2, '0')} ${isPM ? 'PM' : 'AM'}`;
         
         return {
           name: event.title,
           venue: event.venue.name,
-          date: eventDateLocal,
+          date: eventDateUTC,
           dateUTC: eventDateUTC,
-          time: this.formatEventTime(eventDateLocal, store),
+          time: timeStr,
           capacity: event.venue.capacity || 5000,
           type: event.type,
           impact: this.calculateEventImpact(event.venue.capacity || 5000, eventDateLocal),
@@ -599,54 +614,62 @@ const response = await axios.get('https://app.ticketmaster.com/discovery/v2/even
     // Parse event date as UTC
     const eventDateUTC = new Date(event.dates.start.dateTime);
     
-    // Convert to store local time
-    const eventDateLocal = this.getStoreLocalDate(eventDateUTC, store);
+    // Get store's current time in UTC
+    const nowUTC = new Date();
     
-    // Get store's current local time
-    const storeNowLocal = this.getStoreCurrentDate(store);
-    
-    // Calculate time differences using local times
-    const hoursUntilEvent = (eventDateLocal - storeNowLocal) / (1000 * 60 * 60);
+    // Calculate hours until event (both in UTC, so comparison is valid)
+    const hoursUntilEvent = (eventDateUTC - nowUTC) / (1000 * 60 * 60);
     const daysUntilEvent = Math.floor(hoursUntilEvent / 24);
     
-    // Check if event is "today" in store's timezone
-    const storeToday = new Date(storeNowLocal);
+    // For "today" check, we need to compare dates in store's timezone
+    const offsetMinutes = this.parseTimezoneOffset(store.timezone);
+    
+    // Get "today" boundaries in store timezone
+    const nowMs = nowUTC.getTime();
+    const storeNowMs = nowMs + (offsetMinutes * 60 * 1000);
+    const storeToday = new Date(storeNowMs);
     storeToday.setHours(0, 0, 0, 0);
-    const storeTomorrow = new Date(storeToday);
-    storeTomorrow.setDate(storeTomorrow.getDate() + 1);
+    // Convert back to UTC for comparison
+    const todayStartUTC = new Date(storeToday.getTime() - (offsetMinutes * 60 * 1000));
+    const tomorrowStartUTC = new Date(todayStartUTC.getTime() + (24 * 60 * 60 * 1000));
     
-    const eventDay = new Date(eventDateLocal);
-    eventDay.setHours(0, 0, 0, 0);
-    
-    const isToday = eventDay.getTime() === storeToday.getTime();
+    const isToday = eventDateUTC >= todayStartUTC && eventDateUTC < tomorrowStartUTC;
     const isPastToday = isToday && hoursUntilEvent < 0;
+    
+    // Format time in store's timezone
+    const eventStoreMs = eventDateUTC.getTime() + (offsetMinutes * 60 * 1000);
+    const eventStoreDate = new Date(eventStoreMs);
+    const hours = eventStoreDate.getHours();
+    const minutes = eventStoreDate.getMinutes();
+    const isPM = hours >= 12;
+    const displayHours = hours === 0 ? 12 : hours > 12 ? hours - 12 : hours;
+    const timeStr = `${displayHours}:${minutes.toString().padStart(2, '0')} ${isPM ? 'PM' : 'AM'}`;
     
     const eventData = {
       name: event.name,
       venue: venue?.name || 'Unknown',
-      date: eventDateLocal, // Store the local date for display
-      dateUTC: eventDateUTC, // Keep UTC for reference
-      time: this.formatEventTime(eventDateLocal, store),
+      date: eventDateUTC, // Keep as UTC
+      time: timeStr, // Display in store timezone
       capacity,
       type: event.classifications?.[0]?.segment?.name || 'Event',
-      impact: this.calculateEventImpact(capacity, eventDateLocal),
+      impact: this.calculateEventImpact(capacity, eventDateUTC),
       hoursUntilEvent,
       daysUntilEvent,
       isToday,
       isPastToday,
       
-      // Calculate windows using local times
+      // Pre/post windows in UTC
       preEventWindow: {
-        start: new Date(eventDateLocal.getTime() - (3 * 60 * 60 * 1000)),
-        end: new Date(eventDateLocal.getTime() - (30 * 60 * 1000)),
+        start: new Date(eventDateUTC.getTime() - (3 * 60 * 60 * 1000)),
+        end: new Date(eventDateUTC.getTime() - (30 * 60 * 1000)),
         expectedOrders: Math.floor(capacity * 0.005),
         staffingNeeded: Math.ceil((capacity * 0.005) / 20)
       },
       
       postEventWindow: {
-        start: eventDateLocal,
-        end: new Date(eventDateLocal.getTime() + (2 * 60 * 60 * 1000)),
-        peakTime: new Date(eventDateLocal.getTime() + (45 * 60 * 1000)),
+        start: eventDateUTC,
+        end: new Date(eventDateUTC.getTime() + (2 * 60 * 60 * 1000)),
+        peakTime: new Date(eventDateUTC.getTime() + (45 * 60 * 1000)),
         expectedOrders: Math.floor(capacity * 0.01),
         staffingNeeded: Math.ceil((capacity * 0.01) / 15)
       }
@@ -1234,20 +1257,6 @@ await this.enforceRateLimit('google');
     return `${displayHours}:${minutes.toString().padStart(2, '0')} ${isPM ? 'PM' : 'AM'}`;
   }
 
-  formatEventTime(date, store) {
-    if (!date) return '';
-    
-    // If date is already a Date object in store local time, we don't need to convert
-    const totalMinutes = Math.floor(date.getTime() / 60000);
-    const dayMinutes = ((totalMinutes % (24 * 60)) + (24 * 60)) % (24 * 60);
-    const hours = Math.floor(dayMinutes / 60);
-    const minutes = dayMinutes % 60;
-    const isPM = hours >= 12;
-    const displayHours = hours === 0 ? 12 : hours > 12 ? hours - 12 : hours;
-    
-    return `${displayHours}:${minutes.toString().padStart(2, '0')} ${isPM ? 'PM' : 'AM'}`;
-  }
-
 
   simplifyTimeFormat(timeStr) {
     // Convert "11:36 PM" to "11:30pm" (round to nearest 15 min)
@@ -1653,6 +1662,8 @@ if (event.date.getDay() >= 1 && event.date.getDay() <= 4) {
   CRITICAL INSIGHT RULES:
   - Always name specific events by name (e.g., "Lakers game", not "sporting event")
   - Use simple time format (e.g., "11:30pm", not "23:36")
+  - Round times to nearest 15 minutes for simplicity (e.g., "12:15pm" not "12:08pm")
+- When referring to general time periods, use natural language like "around noon" or "early afternoon"
   - Write like you're texting a manager, not writing a thesis
   - Maximum 3 key facts per insight
   - If mentioning multiple events, name them specifically
@@ -1671,7 +1682,29 @@ if (event.date.getDay() >= 1 && event.date.getDay() <= 4) {
   validateResponse(response) {
     // Clean up the insight - replace complex times with simple ones
     let cleanInsight = response.insight || "Monitor operations closely";
-    cleanInsight = cleanInsight.replace(/(\d{1,2}:\d{2}\s*[AP]M)/gi, (match) => {
+    
+    // First, replace specific times with rounded versions
+    cleanInsight = cleanInsight.replace(/(\d{1,2}):(\d{2})\s*(AM|PM)/gi, (match, hours, minutes, period) => {
+      const h = parseInt(hours);
+      const m = parseInt(minutes);
+      
+      // Round to nearest 15 minutes
+      const roundedMinutes = Math.round(m / 15) * 15;
+      
+      // For times near the top of the hour, use natural language
+      if (h === 12 && roundedMinutes === 0) {
+        return "noon";
+      } else if (roundedMinutes === 0) {
+        return `${h}${period.toLowerCase()}`;
+      } else if (roundedMinutes === 60) {
+        return `${h + 1}${period.toLowerCase()}`;
+      } else {
+        return `${h}:${roundedMinutes.toString().padStart(2, '0')}${period.toLowerCase()}`;
+      }
+    });
+    
+    // Then apply the existing simplification
+    cleanInsight = cleanInsight.replace(/(\d{1,2}:\d{2}\s*[ap]m)/gi, (match) => {
       return this.simplifyTimeFormat(match);
     });
     
