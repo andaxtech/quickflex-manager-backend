@@ -646,12 +646,9 @@ const response = await axios.get('https://app.ticketmaster.com/discovery/v2/even
     const venueLng = venue?.location?.longitude;
     
     // Parse event date as UTC
-    const eventDateUTC = new Date(event.dates.start.dateTime);
-    
-    // Get store's current time in UTC
-    const nowUTC = new Date();
-    
-    // Get current UTC time properly
+      const eventDateUTC = new Date(event.dates.start.dateTime);
+
+      // Get current UTC time properly
       const nowUTC = new Date();
       const deviceOffset = nowUTC.getTimezoneOffset() * 60 * 1000;
       const actualUTC = new Date(nowUTC.getTime() + deviceOffset);
