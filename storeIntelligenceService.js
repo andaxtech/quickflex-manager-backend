@@ -292,6 +292,15 @@ const response = await axios.get('https://app.ticketmaster.com/discovery/v2/even
 
       console.log(`✅ Filtered to ${events.length} relevant events`);
 
+      // Debug event times
+        events.forEach(event => {
+          console.log(`Event: ${event.name} at ${event.venue}`);
+          console.log(`  - Time string: ${event.time}`);
+          console.log(`  - Hours until: ${event.hoursUntilEvent.toFixed(1)}`);
+          console.log(`  - Is today: ${event.isToday}`);
+          console.log(`  - Date: ${event.date}`);
+        });
+
       this.setCache(cacheKey, events);
       return events;
       
@@ -411,11 +420,7 @@ const response = await axios.get('https://app.ticketmaster.com/discovery/v2/even
           venue: event.venue.name,
           date: eventDateLocal,
           dateUTC: eventDateUTC,
-          time: eventDateLocal.toLocaleTimeString('en-US', { 
-            hour: '2-digit', 
-            minute: '2-digit',
-            hour12: true
-          }),
+          time: this.formatEventTime(eventDateLocal, store),
           capacity: event.venue.capacity || 5000,
           type: event.type,
           impact: this.calculateEventImpact(event.venue.capacity || 5000, eventDateLocal),
@@ -505,10 +510,7 @@ const response = await axios.get('https://app.ticketmaster.com/discovery/v2/even
             name: event.name.text,
             venue: event.venue?.name || 'TBD',
             date: eventDate,
-            time: eventDate.toLocaleTimeString('en-US', { 
-              hour: '2-digit', 
-              minute: '2-digit' 
-            }),
+            time: this.formatEventTime(eventDate, store),
             capacity: capacity,
             type: 'Event',
             impact: this.calculateEventImpact(capacity, eventDate),
@@ -624,11 +626,7 @@ const response = await axios.get('https://app.ticketmaster.com/discovery/v2/even
       venue: venue?.name || 'Unknown',
       date: eventDateLocal, // Store the local date for display
       dateUTC: eventDateUTC, // Keep UTC for reference
-      time: eventDateLocal.toLocaleTimeString('en-US', { 
-        hour: '2-digit', 
-        minute: '2-digit',
-        hour12: true 
-      }),
+      time: this.formatEventTime(eventDateLocal, store),
       capacity,
       type: event.classifications?.[0]?.segment?.name || 'Event',
       impact: this.calculateEventImpact(capacity, eventDateLocal),
@@ -1235,6 +1233,21 @@ await this.enforceRateLimit('google');
     
     return `${displayHours}:${minutes.toString().padStart(2, '0')} ${isPM ? 'PM' : 'AM'}`;
   }
+
+  formatEventTime(date, store) {
+    if (!date) return '';
+    
+    // If date is already a Date object in store local time, we don't need to convert
+    const totalMinutes = Math.floor(date.getTime() / 60000);
+    const dayMinutes = ((totalMinutes % (24 * 60)) + (24 * 60)) % (24 * 60);
+    const hours = Math.floor(dayMinutes / 60);
+    const minutes = dayMinutes % 60;
+    const isPM = hours >= 12;
+    const displayHours = hours === 0 ? 12 : hours > 12 ? hours - 12 : hours;
+    
+    return `${displayHours}:${minutes.toString().padStart(2, '0')} ${isPM ? 'PM' : 'AM'}`;
+  }
+
 
   simplifyTimeFormat(timeStr) {
     // Convert "11:36 PM" to "11:30pm" (round to nearest 15 min)
