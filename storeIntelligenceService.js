@@ -1595,14 +1595,14 @@ if (event.date.getDay() >= 1 && event.date.getDay() <= 4) {
   }
 
   validateResponse(response) {
+    // Clean up the insight - replace complex times with simple ones
+    let cleanInsight = response.insight || "Monitor operations closely";
+    cleanInsight = cleanInsight.replace(/(\d{1,2}:\d{2}\s*[AP]M)/gi, (match) => {
+      return this.simplifyTimeFormat(match);
+    });
+    
     return {
-      insight: String(response.insight || "Monitor operations closely").substring(0, 100),
-      // Clean up the insight - replace complex times with simple ones
-        let cleanInsight = response.insight || "Monitor operations closely";
-        cleanInsight = cleanInsight.replace(/(\d{1,2}:\d{2}\s*[AP]M)/gi, (match) => {
-          return this.simplifyTimeFormat(match);
-        });
-        insight: cleanInsight.substring(0, 100),
+      insight: cleanInsight.substring(0, 100),
       severity: ["info", "warning", "high"].includes(response.severity) 
         ? response.severity : "info",
         metrics: {
