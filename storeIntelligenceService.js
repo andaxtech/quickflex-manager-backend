@@ -229,8 +229,26 @@ calculateCarryoutOpportunity(trigger, data) {
           unit: 'miles',
           size: 20,  // Increased from 10
           sort: 'date,asc',
-          startDateTime: new Date().toISOString(),
-          endDateTime: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString()
+          // Get store's current local time
+          const storeNowLocal = this.getStoreCurrentDate(store);
+
+          // Calculate start of today in store's timezone
+          const storeTodayStart = new Date(storeNowLocal);
+          storeTodayStart.setHours(0, 0, 0, 0);
+
+          // Calculate 7 days from now in store's timezone
+          const storeWeekEnd = new Date(storeTodayStart);
+          storeWeekEnd.setDate(storeWeekEnd.getDate() + 7);
+          storeWeekEnd.setHours(23, 59, 59, 999);
+
+          // Convert back to UTC for API call
+          const offsetMinutes = this.parseTimezoneOffset(store.timezone);
+          const startDateTimeUTC = new Date(storeTodayStart.getTime() - (offsetMinutes * 60 * 1000));
+          const endDateTimeUTC = new Date(storeWeekEnd.getTime() - (offsetMinutes * 60 * 1000));
+
+          // Then in the params:
+          startDateTime: startDateTimeUTC.toISOString(),
+          endDateTime: endDateTimeUTC.toISOString()
         },
         timeout: 5000
       });
@@ -258,7 +276,7 @@ calculateCarryoutOpportunity(trigger, data) {
       });
 
       const processedEvents = response.data._embedded.events
-  .map(event => this.processEvent(event));
+  .map(event => this.processEvent(event, store));
 
       // Log impact scores
       console.log('📊 Event impact scores:');
@@ -377,23 +395,35 @@ calculateCarryoutOpportunity(trigger, data) {
       if (!response.data.events) return [];
   
       return response.data.events.map(event => {
-        const eventDate = new Date(event.datetime_utc);
-        const capacity = event.venue.capacity || 5000;
+        const eventDateUTC = new Date(event.datetime_utc);
+        const eventDateLocal = this.getStoreLocalDate(eventDateUTC, store);
+        const storeNowLocal = this.getStoreCurrentDate(store);
+        const hoursUntilEvent = (eventDateLocal - storeNowLocal) / (1000 * 60 * 60);
+        
+        // Check if today in store timezone
+        const storeToday = new Date(storeNowLocal);
+        storeToday.setHours(0, 0, 0, 0);
+        const eventDay = new Date(eventDateLocal);
+        eventDay.setHours(0, 0, 0, 0);
+        const isToday = eventDay.getTime() === storeToday.getTime();
         
         return {
           name: event.title,
           venue: event.venue.name,
-          date: eventDate,
-          time: eventDate.toLocaleTimeString('en-US', { 
+          date: eventDateLocal,
+          dateUTC: eventDateUTC,
+          time: eventDateLocal.toLocaleTimeString('en-US', { 
             hour: '2-digit', 
-            minute: '2-digit' 
+            minute: '2-digit',
+            hour12: true
           }),
-          capacity: capacity,
+          capacity: event.venue.capacity || 5000,
           type: event.type,
-          impact: this.calculateEventImpact(capacity, eventDate),
-          hoursUntilEvent: (eventDate - new Date()) / (1000 * 60 * 60),
-          daysUntilEvent: Math.floor((eventDate - new Date()) / (1000 * 60 * 60 * 24)),
-          isToday: (eventDate - new Date()) / (1000 * 60 * 60) >= -12 && (eventDate - new Date()) / (1000 * 60 * 60) < 24,
+          impact: this.calculateEventImpact(event.venue.capacity || 5000, eventDateLocal),
+          hoursUntilEvent,
+          daysUntilEvent: Math.floor(hoursUntilEvent / 24),
+          isToday,
+          isPastToday: isToday && hoursUntilEvent < 0,
           source: 'seatgeek',
           preEventWindow: {
             start: new Date(eventDate.getTime() - (3 * 60 * 60 * 1000)),
@@ -561,51 +591,72 @@ calculateCarryoutOpportunity(trigger, data) {
     }
   }
 
-  processEvent(event) {
+  processEvent(event, store) {
     const venue = event._embedded?.venues?.[0];
     const capacity = parseInt(venue?.capacity) || 5000;
-    const eventDate = new Date(event.dates.start.dateTime);
     
-    const now = new Date();
-    const hoursUntilEvent = (eventDate - now) / (1000 * 60 * 60);
+    // Parse event date as UTC
+    const eventDateUTC = new Date(event.dates.start.dateTime);
+    
+    // Convert to store local time
+    const eventDateLocal = this.getStoreLocalDate(eventDateUTC, store);
+    
+    // Get store's current local time
+    const storeNowLocal = this.getStoreCurrentDate(store);
+    
+    // Calculate time differences using local times
+    const hoursUntilEvent = (eventDateLocal - storeNowLocal) / (1000 * 60 * 60);
     const daysUntilEvent = Math.floor(hoursUntilEvent / 24);
-  
-    // Include today's events (negative hours mean event has passed today)
-    const isToday = hoursUntilEvent >= -12 && hoursUntilEvent < 24;
-  
+    
+    // Check if event is "today" in store's timezone
+    const storeToday = new Date(storeNowLocal);
+    storeToday.setHours(0, 0, 0, 0);
+    const storeTomorrow = new Date(storeToday);
+    storeTomorrow.setDate(storeTomorrow.getDate() + 1);
+    
+    const eventDay = new Date(eventDateLocal);
+    eventDay.setHours(0, 0, 0, 0);
+    
+    const isToday = eventDay.getTime() === storeToday.getTime();
+    const isPastToday = isToday && hoursUntilEvent < 0;
+    
     const eventData = {
       name: event.name,
       venue: venue?.name || 'Unknown',
-      date: eventDate,
-      time: eventDate.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
+      date: eventDateLocal, // Store the local date for display
+      dateUTC: eventDateUTC, // Keep UTC for reference
+      time: eventDateLocal.toLocaleTimeString('en-US', { 
+        hour: '2-digit', 
+        minute: '2-digit',
+        hour12: true 
+      }),
       capacity,
       type: event.classifications?.[0]?.segment?.name || 'Event',
-      impact: this.calculateEventImpact(capacity, eventDate),
+      impact: this.calculateEventImpact(capacity, eventDateLocal),
       hoursUntilEvent,
       daysUntilEvent,
       isToday,
-      isPastToday: hoursUntilEvent < 0 && hoursUntilEvent >= -12,
+      isPastToday,
       
-      // Specific timing insights
+      // Calculate windows using local times
       preEventWindow: {
-        start: new Date(eventDate.getTime() - (3 * 60 * 60 * 1000)), // 3 hours before
-        end: new Date(eventDate.getTime() - (30 * 60 * 1000)), // 30 min before
-        expectedOrders: Math.floor(capacity * 0.005), // 0.5% of attendees
-staffingNeeded: Math.ceil((capacity * 0.005) / 20) // 1 driver per 20 orders
+        start: new Date(eventDateLocal.getTime() - (3 * 60 * 60 * 1000)),
+        end: new Date(eventDateLocal.getTime() - (30 * 60 * 1000)),
+        expectedOrders: Math.floor(capacity * 0.005),
+        staffingNeeded: Math.ceil((capacity * 0.005) / 20)
       },
       
       postEventWindow: {
-        start: eventDate,
-        end: new Date(eventDate.getTime() + (2 * 60 * 60 * 1000)), // 2 hours after
-        peakTime: new Date(eventDate.getTime() + (45 * 60 * 1000)), // 45 min after
-        expectedOrders: Math.floor(capacity * 0.01), // 1% of attendees
-staffingNeeded: Math.ceil((capacity * 0.01) / 15) // 1 driver per 15 orders (rush)
+        start: eventDateLocal,
+        end: new Date(eventDateLocal.getTime() + (2 * 60 * 60 * 1000)),
+        peakTime: new Date(eventDateLocal.getTime() + (45 * 60 * 1000)),
+        expectedOrders: Math.floor(capacity * 0.01),
+        staffingNeeded: Math.ceil((capacity * 0.01) / 15)
       }
     };
-  
-    // Add pre-order opportunity for events 2-7 days out
+    
     eventData.preOrderOpportunity = this.createPreOrderOpportunity(eventData);
-  
+    
     return eventData;
   }
 
@@ -1143,6 +1194,17 @@ await this.enforceRateLimit('google');
     const storeLocalTimeMs = now.getTime() + (offsetMinutes * 60 * 1000);
     
     return new Date(storeLocalTimeMs);
+  }
+
+  getStoreLocalDate(utcDate, store) {
+    const offsetMinutes = this.parseTimezoneOffset(store.timezone);
+    const localMs = utcDate.getTime() + (offsetMinutes * 60 * 1000);
+    return new Date(localMs);
+  }
+  
+  getStoreCurrentDate(store) {
+    const now = new Date();
+    return this.getStoreLocalDate(now, store);
   }
 
   parseTimezoneOffset(timezone) {
