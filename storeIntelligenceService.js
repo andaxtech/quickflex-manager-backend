@@ -56,7 +56,7 @@ class StoreIntelligenceService {
       state: store.state || store.region,
       lat: parseFloat(store.store_latitude),
       lng: parseFloat(store.store_longitude),
-      timezone: store.time_zone_code,
+      timezone: store.timeZoneCode || store.time_zone_code || 'GMT-07:00',
       isOnline: store.is_online_now && !store.is_force_offline,
       cashLimit: store.cash_limit,
       deliveryFee: store.delivery_fee,
@@ -1260,8 +1260,8 @@ await this.enforceRateLimit('google');
     const now = new Date();
     const offsetMinutes = this.parseTimezoneOffset(store.timezone);
     
-    // Get UTC time first
-    const utcMs = now.getTime() + (now.getTimezoneOffset() * 60 * 1000);
+    // Get UTC time first (getTimezoneOffset returns negative for west of UTC)
+const utcMs = now.getTime() - (now.getTimezoneOffset() * 60 * 1000);
     
     // Then add store's offset
     const storeLocalTimeMs = utcMs + (offsetMinutes * 60 * 1000);
