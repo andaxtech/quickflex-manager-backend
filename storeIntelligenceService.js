@@ -369,7 +369,7 @@ calculateCarryoutOpportunity(trigger, data) {
     try {
       const sgClientId = process.env.SEATGEEK_CLIENT_ID;
       if (!sgClientId) return [];
-
+  
       const response = await axios.get('https://api.seatgeek.com/2/events', {
         params: {
           client_id: sgClientId,
@@ -383,28 +383,43 @@ calculateCarryoutOpportunity(trigger, data) {
           }
         }
       });
-
+  
       if (!response.data.events) return [];
-
-      return response.data.events.map(event => ({
-        name: event.title,
-        venue: event.venue.name,
-        date: new Date(event.datetime_utc),
-        time: new Date(event.datetime_utc).toLocaleTimeString('en-US', { 
-          hour: '2-digit', 
-          minute: '2-digit' 
-        }),
-        capacity: event.venue.capacity || 5000,
-        type: event.type,
-        impact: this.calculateEventImpact(
-          event.venue.capacity || 5000, 
-          new Date(event.datetime_utc)
-        ),
-        hoursUntilEvent: (new Date(event.datetime_utc) - new Date()) / (1000 * 60 * 60),
-        daysUntilEvent: Math.floor((new Date(event.datetime_utc) - new Date()) / (1000 * 60 * 60 * 24)),
-        isToday: (new Date(event.datetime_utc) - new Date()) / (1000 * 60 * 60) >= -12 && (new Date(event.datetime_utc) - new Date()) / (1000 * 60 * 60) < 24,
-        source: 'seatgeek'
-      }));
+  
+      return response.data.events.map(event => {
+        const eventDate = new Date(event.datetime_utc);
+        const capacity = event.venue.capacity || 5000;
+        
+        return {
+          name: event.title,
+          venue: event.venue.name,
+          date: eventDate,
+          time: eventDate.toLocaleTimeString('en-US', { 
+            hour: '2-digit', 
+            minute: '2-digit' 
+          }),
+          capacity: capacity,
+          type: event.type,
+          impact: this.calculateEventImpact(capacity, eventDate),
+          hoursUntilEvent: (eventDate - new Date()) / (1000 * 60 * 60),
+          daysUntilEvent: Math.floor((eventDate - new Date()) / (1000 * 60 * 60 * 24)),
+          isToday: (eventDate - new Date()) / (1000 * 60 * 60) >= -12 && (eventDate - new Date()) / (1000 * 60 * 60) < 24,
+          source: 'seatgeek',
+          preEventWindow: {
+            start: new Date(eventDate.getTime() - (3 * 60 * 60 * 1000)),
+            end: new Date(eventDate.getTime() - (30 * 60 * 1000)),
+            expectedOrders: Math.floor(capacity * 0.02),
+            staffingNeeded: Math.ceil((capacity * 0.02) / 20)
+          },
+          postEventWindow: {
+            start: eventDate,
+            end: new Date(eventDate.getTime() + (2 * 60 * 60 * 1000)),
+            peakTime: new Date(eventDate.getTime() + (45 * 60 * 1000)),
+            expectedOrders: Math.floor(capacity * 0.03),
+            staffingNeeded: Math.ceil((capacity * 0.03) / 15)
+          }
+        };
+      });
     } catch (error) {
       console.error('SeatGeek API error:', error);
       return [];
@@ -463,26 +478,41 @@ calculateCarryoutOpportunity(trigger, data) {
           return true; // Include if no venue coords
         })
         .slice(0, 10)
-        .map(event => ({
-          name: event.name.text,
-          venue: event.venue?.name || 'TBD',
-          date: new Date(event.start.utc),
-          time: new Date(event.start.utc).toLocaleTimeString('en-US', { 
-            hour: '2-digit', 
-            minute: '2-digit' 
-          }),
-          capacity: event.capacity || 5000,
-          type: 'Event',
-          impact: this.calculateEventImpact(
-            event.capacity || 5000, 
-            new Date(event.start.utc)
-          ),
-          hoursUntilEvent: (new Date(event.start.utc) - new Date()) / (1000 * 60 * 60),
-          daysUntilEvent: Math.floor((new Date(event.start.utc) - new Date()) / (1000 * 60 * 60 * 24)),
-          isToday: (new Date(event.start.utc) - new Date()) / (1000 * 60 * 60) >= -12 && 
-                   (new Date(event.start.utc) - new Date()) / (1000 * 60 * 60) < 24,
-          source: 'eventbrite'
-        }));
+        .map(event => {
+          const eventDate = new Date(event.start.utc);
+          const capacity = event.capacity || 5000;
+          
+          return {
+            name: event.name.text,
+            venue: event.venue?.name || 'TBD',
+            date: eventDate,
+            time: eventDate.toLocaleTimeString('en-US', { 
+              hour: '2-digit', 
+              minute: '2-digit' 
+            }),
+            capacity: capacity,
+            type: 'Event',
+            impact: this.calculateEventImpact(capacity, eventDate),
+            hoursUntilEvent: (eventDate - new Date()) / (1000 * 60 * 60),
+            daysUntilEvent: Math.floor((eventDate - new Date()) / (1000 * 60 * 60 * 24)),
+            isToday: (eventDate - new Date()) / (1000 * 60 * 60) >= -12 && 
+                     (eventDate - new Date()) / (1000 * 60 * 60) < 24,
+            source: 'eventbrite',
+            preEventWindow: {
+              start: new Date(eventDate.getTime() - (3 * 60 * 60 * 1000)),
+              end: new Date(eventDate.getTime() - (30 * 60 * 1000)),
+              expectedOrders: Math.floor(capacity * 0.02),
+              staffingNeeded: Math.ceil((capacity * 0.02) / 20)
+            },
+            postEventWindow: {
+              start: eventDate,
+              end: new Date(eventDate.getTime() + (2 * 60 * 60 * 1000)),
+              peakTime: new Date(eventDate.getTime() + (45 * 60 * 1000)),
+              expectedOrders: Math.floor(capacity * 0.03),
+              staffingNeeded: Math.ceil((capacity * 0.03) / 15)
+            }
+          };
+        });
     } catch (error) {
       console.error('Eventbrite API error:', error.response?.status, error.response?.data?.error_description || error.message);
       return [];
@@ -502,19 +532,37 @@ calculateCarryoutOpportunity(trigger, data) {
   
       if (!response.data.results) return [];
   
-      const venues = response.data.results.slice(0, 5).map(place => ({
-        name: `Event at ${place.name}`,
-        venue: place.name,
-        date: new Date(),
-        time: 'Various',
-        capacity: place.user_ratings_total ? place.user_ratings_total * 10 : 5000,
-        type: 'Venue Activity',
-        impact: 0.5,
-        hoursUntilEvent: 0,
-        daysUntilEvent: 0,
-        isToday: true,
-        source: 'google_places'
-      }));
+      const venues = response.data.results.slice(0, 5).map(place => {
+        const eventDate = new Date();
+        const capacity = place.user_ratings_total ? place.user_ratings_total * 10 : 5000;
+        
+        return {
+          name: `Event at ${place.name}`,
+          venue: place.name,
+          date: eventDate,
+          time: 'Various',
+          capacity: capacity,
+          type: 'Venue Activity',
+          impact: 0.5,
+          hoursUntilEvent: 0,
+          daysUntilEvent: 0,
+          isToday: true,
+          source: 'google_places',
+          preEventWindow: {
+            start: new Date(eventDate.getTime() - (3 * 60 * 60 * 1000)),
+            end: new Date(eventDate.getTime() - (30 * 60 * 1000)),
+            expectedOrders: Math.floor(capacity * 0.02),
+            staffingNeeded: Math.ceil((capacity * 0.02) / 20)
+          },
+          postEventWindow: {
+            start: eventDate,
+            end: new Date(eventDate.getTime() + (2 * 60 * 60 * 1000)),
+            peakTime: new Date(eventDate.getTime() + (45 * 60 * 1000)),
+            expectedOrders: Math.floor(capacity * 0.03),
+            staffingNeeded: Math.ceil((capacity * 0.03) / 15)
+          }
+        };
+      });
   
       return venues;
     } catch (error) {
@@ -530,44 +578,44 @@ calculateCarryoutOpportunity(trigger, data) {
     
     const now = new Date();
     const hoursUntilEvent = (eventDate - now) / (1000 * 60 * 60);
-      const daysUntilEvent = Math.floor(hoursUntilEvent / 24);
-
-      // Include today's events (negative hours mean event has passed today)
-      const isToday = hoursUntilEvent >= -12 && hoursUntilEvent < 24;
-
-      const eventData = {
-        name: event.name,
-        venue: venue?.name || 'Unknown',
-        date: eventDate,
-        time: eventDate.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
-        capacity,
-        type: event.classifications?.[0]?.segment?.name || 'Event',
-        impact: this.calculateEventImpact(capacity, eventDate),
-        hoursUntilEvent,
-        daysUntilEvent,
-        isToday,
-        isPastToday: hoursUntilEvent < 0 && hoursUntilEvent >= -12,
-        
-        // NEW: Specific timing insights
-        preEventWindow: {
-          start: new Date(eventDate.getTime() - (3 * 60 * 60 * 1000)), // 3 hours before
-          end: new Date(eventDate.getTime() - (30 * 60 * 1000)), // 30 min before
-          expectedOrders: Math.floor(capacity * 0.02), // 2% of attendees
-          staffingNeeded: Math.ceil((capacity * 0.02) / 20) // 1 driver per 20 orders
-        },
-        
-        postEventWindow: {
-          start: eventDate,
-          end: new Date(eventDate.getTime() + (2 * 60 * 60 * 1000)), // 2 hours after
-          peakTime: new Date(eventDate.getTime() + (45 * 60 * 1000)), // 45 min after
-          expectedOrders: Math.floor(capacity * 0.03), // 3% of attendees
-          staffingNeeded: Math.ceil((capacity * 0.03) / 15) // 1 driver per 15 orders (rush)
-        }
-      };
-
+    const daysUntilEvent = Math.floor(hoursUntilEvent / 24);
+  
+    // Include today's events (negative hours mean event has passed today)
+    const isToday = hoursUntilEvent >= -12 && hoursUntilEvent < 24;
+  
+    const eventData = {
+      name: event.name,
+      venue: venue?.name || 'Unknown',
+      date: eventDate,
+      time: eventDate.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
+      capacity,
+      type: event.classifications?.[0]?.segment?.name || 'Event',
+      impact: this.calculateEventImpact(capacity, eventDate),
+      hoursUntilEvent,
+      daysUntilEvent,
+      isToday,
+      isPastToday: hoursUntilEvent < 0 && hoursUntilEvent >= -12,
+      
+      // NEW: Specific timing insights
+      preEventWindow: {
+        start: new Date(eventDate.getTime() - (3 * 60 * 60 * 1000)), // 3 hours before
+        end: new Date(eventDate.getTime() - (30 * 60 * 1000)), // 30 min before
+        expectedOrders: Math.floor(capacity * 0.02), // 2% of attendees
+        staffingNeeded: Math.ceil((capacity * 0.02) / 20) // 1 driver per 20 orders
+      },
+      
+      postEventWindow: {
+        start: eventDate,
+        end: new Date(eventDate.getTime() + (2 * 60 * 60 * 1000)), // 2 hours after
+        peakTime: new Date(eventDate.getTime() + (45 * 60 * 1000)), // 45 min after
+        expectedOrders: Math.floor(capacity * 0.03), // 3% of attendees
+        staffingNeeded: Math.ceil((capacity * 0.03) / 15) // 1 driver per 15 orders (rush)
+      }
+    };
+  
     // Add pre-order opportunity for events 2-7 days out
     eventData.preOrderOpportunity = this.createPreOrderOpportunity(eventData);
-
+  
     return eventData;
   }
 
@@ -1251,7 +1299,7 @@ getStaffingRecommendation(analysis) {
       prompt.push(`- Traffic: ${data.traffic.delayMinutes} min delays (${data.traffic.severity})`);
     }
     
-    if (data.events.length > 0) {
+    if (data.events && data.events.length > 0) {
       // Split events by timing
       const todayEvents = data.events.filter(e => e.isToday);
       const upcomingEvents = data.events.filter(e => !e.isToday && e.daysUntilEvent <= 7);
@@ -1260,19 +1308,35 @@ getStaffingRecommendation(analysis) {
         prompt.push(``, `TODAY'S EVENTS REQUIRING ACTION:`);
         todayEvents.forEach(event => {
           if (event.hoursUntilEvent > 0) {
-            prompt.push(
-              `- ${event.name} @ ${event.venue} starts at ${event.time}`,
-              `  Pre-event orders: ${event.preEventWindow.start.toLocaleTimeString()} - ${event.preEventWindow.end.toLocaleTimeString()}`,
-              `  Expected: ${event.preEventWindow.expectedOrders} orders, need ${event.preEventWindow.staffingNeeded} extra drivers`,
-              `  Post-event rush: ${event.postEventWindow.start.toLocaleTimeString()} - ${event.postEventWindow.end.toLocaleTimeString()}`,
-              `  Peak at: ${event.postEventWindow.peakTime.toLocaleTimeString()}, expect ${event.postEventWindow.expectedOrders} orders`
-            );
+            // Check if event has the window data before accessing it
+            if (event.preEventWindow && event.postEventWindow) {
+              prompt.push(
+                `- ${event.name} @ ${event.venue} starts at ${event.time}`,
+                `  Pre-event orders: ${event.preEventWindow?.start.toLocaleTimeString()} - ${event.preEventWindow?.end.toLocaleTimeString()}`,
+                `  Expected: ${event.preEventWindow?.expectedOrders} orders, need ${event.preEventWindow?.staffingNeeded} extra drivers`,
+                `  Post-event rush: ${event.postEventWindow?.start.toLocaleTimeString()} - ${event.postEventWindow?.end.toLocaleTimeString()}`,
+                `  Peak at: ${event.postEventWindow?.peakTime?.toLocaleTimeString() || 'TBD'}, expect ${event.postEventWindow?.expectedOrders || 0} orders`
+              );
+            } else {
+              // Fallback for events without window data
+              prompt.push(
+                `- ${event.name} @ ${event.venue} starts at ${event.time}`,
+                `  Capacity: ${event.capacity}, Impact: ${event.impact.toFixed(2)}`
+              );
+            }
           } else if (event.hoursUntilEvent >= -2) {
-            prompt.push(
-              `- ${event.name} IN PROGRESS/ENDING SOON`,
-              `  PREPARE FOR RUSH: Peak expected at ${event.postEventWindow.peakTime.toLocaleTimeString()}`,
-              `  Need ${event.postEventWindow.staffingNeeded} drivers ready NOW`
-            );
+            if (event.postEventWindow) {
+              prompt.push(
+                `- ${event.name} IN PROGRESS/ENDING SOON`,
+                `  PREPARE FOR RUSH: Peak expected at ${event.postEventWindow?.peakTime?.toLocaleTimeString() || 'soon'}`,
+                `  Need ${event.postEventWindow?.staffingNeeded || 0} drivers ready NOW`
+              );
+            } else {
+              prompt.push(
+                `- ${event.name} IN PROGRESS/ENDING SOON`,
+                `  Monitor for potential post-event orders`
+              );
+            }
           }
         });
       }
@@ -1283,7 +1347,7 @@ getStaffingRecommendation(analysis) {
           const dayName = event.date.toLocaleDateString('en-US', { weekday: 'long' });
           prompt.push(
             `- ${dayName}: ${event.name} (${event.capacity.toLocaleString()} people)`,
-            `  Schedule ${event.preEventWindow.staffingNeeded + event.postEventWindow.staffingNeeded} extra drivers for ${event.time}`
+            `  Schedule ${(event.preEventWindow?.staffingNeeded || 0) + (event.postEventWindow?.staffingNeeded || 0)} extra drivers for ${event.time}`
           );
         });
       }
@@ -1404,13 +1468,13 @@ if (eventImpact.isMajor) {
     }
     
     // NEW: Carryout opportunities
-if (data.weather?.carryoutOpportunity?.isActive) {
-  factors.push(`Carryout opportunity: ${data.weather.carryoutOpportunity.reason} - push ${data.weather.carryoutOpportunity.suggestedDiscount}% off carryout`);
-  factors.push(`Expected ${data.weather.carryoutOpportunity.marginImprovement}% margin improvement vs delivery`);
-}
+    if (data.weather?.carryoutOpportunity?.isActive) {
+      factors.push(`Carryout opportunity: ${data.weather.carryoutOpportunity.reason} - push ${data.weather.carryoutOpportunity.discount}% off carryout`);
+      factors.push(`Expected ${data.weather.carryoutOpportunity.margin}% margin improvement vs delivery`);
+    }
 
 if (data.deliveryCapacity?.carryoutOpportunity) {
-  factors.push(`Delivery at ${Math.round(data.deliveryCapacity.utilizationRate * 100)}% capacity - ${data.deliveryCapacity.carryoutOpportunity.message}`);
+  factors.push(`${data.deliveryCapacity.openShiftsAvailable} open shifts available - ${data.deliveryCapacity.carryoutOpportunity.message}`);
 }
 
 // NEW: Pre-order campaigns
