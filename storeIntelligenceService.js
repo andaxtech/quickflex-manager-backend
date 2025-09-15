@@ -1340,7 +1340,7 @@ await this.enforceRateLimit('google');
     return R * c;
   }
 
-  async saveClassification(storeId, classification) {
+  async saveClassification(storeId, classification, method = 'api_enhanced') {
     try {
       await this.dbPool.query(
         `UPDATE locations 
@@ -1349,7 +1349,9 @@ await this.enforceRateLimit('google');
         [storeId, JSON.stringify({
           store_type: classification.type,
           sub_type: classification.subType,
-          classified_at: new Date().toISOString()
+          classified_at: new Date().toISOString(),
+          classification_method: method,
+          classification_confidence: classification.confidence || null
         })]
       );
     } catch (error) {
@@ -1523,11 +1525,10 @@ const utcMs = now.getTime() - (now.getTimezoneOffset() * 60 * 1000);
 
   buildCleanPrompt(store, data, context) {
     const factors = this.identifyKeyFactors(data, context);
-    // Manual extraction to avoid device timezone issues
-    const totalMinutes = Math.floor(context.localTime.getTime() / 60000);
-    const dayMinutes = ((totalMinutes % (24 * 60)) + (24 * 60)) % (24 * 60);
-    const hours = Math.floor(dayMinutes / 60);
-    const minutes = dayMinutes % 60;
+    
+    // Format current time
+    const hours = context.localTime.getHours();
+    const minutes = context.localTime.getMinutes();
     const isPM = hours >= 12;
     const displayHours = hours === 0 ? 12 : hours > 12 ? hours - 12 : hours;
     const timeStr = `${displayHours}:${minutes.toString().padStart(2, '0')} ${isPM ? 'PM' : 'AM'}`;
@@ -1539,160 +1540,78 @@ const utcMs = now.getTime() - (now.getTimezoneOffset() * 60 * 1000);
       '',
       'CURRENT CONDITIONS:'
     ];
-
-    // Add only relevant data
+  
+    // Add weather data
     if (data.weather) {
       prompt.push(`- Weather: ${data.weather.temp}°F, ${data.weather.condition}`);
     }
     
+    // Add traffic data
     if (data.traffic?.affectsDelivery) {
-      prompt.push(`- Traffic: ${data.traffic.delayMinutes} min delays (${data.traffic.severity})`);
+      prompt.push(`- Traffic: ${data.traffic.delayMinutes} min delays`);
     }
     
+    // Add events data
     if (data.events && data.events.length > 0) {
-      // Split events by timing
       const todayEvents = data.events.filter(e => e.isToday);
       const upcomingEvents = data.events.filter(e => !e.isToday && e.daysUntilEvent <= 7);
       
       if (todayEvents.length > 0) {
-        prompt.push(``, `TODAY'S EVENTS REQUIRING ACTION:`);
+        prompt.push('', 'TODAY\'S EVENTS:');
         todayEvents.forEach(event => {
-          // Add distance calculation if venue coordinates available
-          let distanceStr = '';
-          if (event.venue && event.venueLat && event.venueLng) {
-            const distance = this.calculateDistance(store.lat, store.lng, event.venueLat, event.venueLng);
-            distanceStr = ` (${distance.toFixed(1)} miles away)`;
-          }
           if (event.hoursUntilEvent > 0) {
-            // Check if event has the window data before accessing it
-            if (event.preEventWindow && event.postEventWindow) {
-              prompt.push(
-                `- EVENT: "${event.name}" at ${event.venue}, starts ${event.time}`,
-               `  Pre-event window: ${this.formatStoreLocalTime(event.preEventWindow?.start, store)} - ${this.formatStoreLocalTime(event.preEventWindow?.end, store)}`,
-              `  Consider staffing adjustments based on event size`,
-              `  Post-event rush: ${this.formatStoreLocalTime(event.postEventWindow?.start, store)} - ${this.formatStoreLocalTime(event.postEventWindow?.end, store)}`,
-              `  Post-event peak typically around: ${event.postEventWindow?.peakTime ? this.formatStoreLocalTime(event.postEventWindow.peakTime, store) : '45 min after'}`
-              );
-            } else {
-              // Fallback for events without window data
-              prompt.push(
-                `- ${event.name} @ ${event.venue} starts at ${event.time}`
-              );
-            }
+            prompt.push(
+              `- ${event.name} at ${event.venue} starts ${event.time}`,
+              `  Expected orders: ${event.postEventWindow.expectedOrders}`,
+              `  Peak time: ${this.formatStoreLocalTime(event.postEventWindow.peakTime, store)}`
+            );
           } else if (event.hoursUntilEvent >= -2) {
-            if (event.postEventWindow) {
-              prompt.push(
-                `- ${event.name} IN PROGRESS/ENDING SOON`,
-                `  Post-event orders expected to peak around ${event.postEventWindow?.peakTime ? this.formatStoreLocalTime(event.postEventWindow.peakTime, store) : 'event end'}`,
-                `  Consider staffing adjustments based on event size`,
-              );
-            } else {
-              prompt.push(
-                `- ${event.name} IN PROGRESS/ENDING SOON`,
-                `  Monitor for potential post-event orders`
-              );
-            }
+            prompt.push(
+              `- ${event.name} ENDING SOON`,
+              `  Post-event surge expected around ${this.formatStoreLocalTime(event.postEventWindow.peakTime, store)}`
+            );
           }
         });
       }
       
       if (upcomingEvents.length > 0) {
-        prompt.push(``, `UPCOMING EVENTS - STAFFING AWARENESS:`);
+        prompt.push('', 'UPCOMING EVENTS:');
         upcomingEvents.slice(0, 3).forEach(event => {
           const dayName = event.date.toLocaleDateString('en-US', { weekday: 'long' });
-          const dateStr = event.date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
           prompt.push(
-            `- ${dayName} ${dateStr}: ${event.name} at ${event.venue}`,
-            `  Event time: ${event.time}`,
-            `  Key windows: Pre-event ${this.formatStoreLocalTime(event.preEventWindow?.start, store)}, Post-event peak ~${this.formatStoreLocalTime(event.postEventWindow?.peakTime, store)}`
+            `- ${dayName}: ${event.name} at ${event.venue}`,
+            `  Potential for ${event.postEventWindow.expectedOrders} pre-orders`
           );
         });
       }
     }
     
-    if (factors.length > 0) {
-      prompt.push('', 'KEY FACTORS:', ...factors.map(f => `- ${f}`));
-    }
-    
-    // Add boost week specific guidance
+    // Add special opportunities
     if (data.boostWeek?.isHighProbabilityPeriod) {
       prompt.push(
         '',
         'BOOST WEEK OPPORTUNITY:',
-        `- Confidence: ${data.boostWeek.confidence}%`,
-        `- Suggested: ${data.boostWeek.suggestedPromotion.type}`,
-        `- Expected impact: ${data.boostWeek.suggestedPromotion.targetIncrease}`
+        `- ${data.boostWeek.suggestedPromotion.type}`,
+        `- Expected: ${data.boostWeek.suggestedPromotion.targetIncrease}`
       );
     }
     
-    // Add slow period specific guidance
-    if (data.slowPeriod?.currentPeriod || data.slowPeriod?.upcomingSlowPeriod) {
-      prompt.push('', 'SLOW PERIOD MANAGEMENT:');
-      if (data.slowPeriod.currentPeriod) {
-        prompt.push(`- Currently experiencing ${data.slowPeriod.currentPeriod.impact}% order decline`);
-      }
-      data.slowPeriod.recommendations?.forEach(rec => 
-        prompt.push(`- ${rec}`)
+    if (data.slowPeriod?.currentPeriod) {
+      prompt.push(
+        '',
+        'SLOW PERIOD ACTIVE:',
+        `- ${Math.abs(data.slowPeriod.currentPeriod.impact)}% below normal`,
+        `- Recommendation: ${data.slowPeriod.recommendations[0]}`
       );
     }
-
     
-    // Add carryout promotion section
-if (data.weather?.carryoutOpportunity) {
-  prompt.push(
-    '',
-    'CARRYOUT PROMOTION NEEDED:',
-    `- Weather condition: ${data.weather?.condition}`,
-    `- Reason: ${data.weather.carryoutOpportunity.reason}`,
-    `- Suggested promotion: ${data.weather.carryoutOpportunity.message}`
-  );
-}
-
-// Add pre-order campaign section  
-const preOrderEvents = data.events.filter(e => e.preOrderOpportunity?.isActive);
-if (preOrderEvents.length > 0) {
-  prompt.push(
-    '',
-    'PRE-ORDER CAMPAIGNS AVAILABLE:'
-  );
-  preOrderEvents.forEach(event => {
-    prompt.push(
-      `- ${event.name} (${event.daysUntilEvent} days out)`,
-      `  Campaign: "${event.preOrderOpportunity.suggestedCampaign.message}"`
-    );
-  });
-}
-
-prompt.push(
-  '',
-  'INSIGHT EXAMPLES based on current data:',
-  '- If events ending together: "Lakers + Concert both end 11pm - double rush coming"',
-  '- If rain during event: "Rain hits right when Lakers fans leave - delivery surge"',
-  '- If unusual timing: "Tuesday concert rare - catch competitors sleeping"',
-  ''
-);
-
-prompt.push(
-  '',
-  'IMPORTANT: Only suggest carryout promotions for: rain, severe weather, snow, or high traffic delays.',
-  'Do NOT suggest promotions for: haze, clouds, mist, or other mild weather conditions.',
-  '',
-  'Generate a JSON response with:',
-'- insight: The ONE thing they might not realize that could make or break their shift (max 100 chars)',
-'- Think: What pattern or timing detail would make them say "I didn\'t think of that"',
-'- Connect 2+ data points to reveal non-obvious opportunities',
-'- Focus on non-obvious connections: weather + event timing, traffic patterns + competitor advantage, etc.',
-'- The insight must reveal something they likely DON\'T already know',
-  '- severity: "info", "warning", or "high"',
-  '- metrics: {',
-  '    expectedOrderIncrease: 0-100 percentage',
-  '    recommendedExtraDrivers: 0-10',
-  '- primaryReason: Simple explanation with event names (e.g., "Lakers game ending" not "sporting event conclusion")',
-  '  }',
-  '- action: Suggested action with event/reason mentioned (e.g. "Consider extra drivers for 7pm Lakers game", "Weather indicates potential for carryout promotion") (max 80 chars)',
-  '- carryoutPromotion: specific carryout offer if applicable',
-  '- preOrderCampaign: specific pre-order action if applicable'
-);
+    if (data.weather?.carryoutOpportunity) {
+      prompt.push(
+        '',
+        'CARRYOUT OPPORTUNITY:',
+        `- ${data.weather.carryoutOpportunity.message}`
+      );
+    }
     
     return prompt.join('\n');
   }
@@ -1802,61 +1721,34 @@ if (event.date.getDay() >= 1 && event.date.getDay() <= 4) {
     
 
   getSystemPrompt() {
-    return `You are an AI assistant for Domino's Pizza store managers. 
-  Your role is to provide clear, actionable insights based on current conditions.
+    return `You are an experienced Domino's Pizza store manager. Your role is to analyze data and suggest actions. your goal is to increase sales or reduce costs for the store.
   
-  Guidelines:
-  - Reveal hidden patterns and non-obvious opportunities
-  - Connect multiple data points to show what managers might miss
-  - Focus on timing-based opportunities they could overlook
-  - Highlight competitive advantages from external conditions
-  - Point out risk factors that aren't immediately obvious
-  - Base all insights on the provided data only
-  - Never use urgency words like "immediately", "ASAP", "now", "urgent"
-  - Use respectful language: "consider", "patterns suggest", "event indicates"
-  - TODAY'S EVENTS: Provide event name, venue, and timing windows for planning
-  - Pre-event window: 0.5% of attendees typically order
-  - Post-event window: 1% of attendees typically order
-  - Insight should identify the opportunity/challenge (the "why")
-  - Action should be the specific operational step (the "what")
-  - Peak hits 45 minutes after event ends - this is CRITICAL timing
-  - For events 2-7 days out: Flag scheduling conflicts, unusual patterns, or multiple events same day
-  - Future insights should reveal: back-to-back events, unusual day/time combos, holiday conflicts
-  - ALWAYS name the specific event, venue, and time in your response
-  - Calculate drivers needed: 1 per 20 orders pre-event, 1 per 15 orders post-event
-  - Mild weather conditions (haze, clouds) do NOT drive order increases
-  - Only suggest discount percentages that are explicitly provided in the data
-  - If no carryout opportunity is provided, do not make up discount amounts
-  - Respond with valid JSON only
+  Instructions:
+  - Be analytical and connect multiple data points
+  - Provide time-sensitive insights 
+  - do not make assumptions or invent information
+  - Name specific events, venues, and times
+  - Keep responses concise and actionable
+  - Use professional tone
   
-  Examples of valuable insights:
-  - "Post-game traffic gives you 30-min head start on competitors"
-  - "Rain + Taylor Swift concert = perfect storm for record night"
-  - "Competitor's driver shortage during tomorrow's game = your opportunity"  
-  - "Early close risk: similar Tuesday patterns showed 70% order drop"
-  - "Pre-position for 6:45pm surge - concert parking starts at 6:30"
+  Operational assumptions:
+  - Pre-event orders: 0.5% of venue capacity
+  - Post-event orders: 1% of venue capacity  
+  - Peak orders occur 45 minutes after events end
+  - 1 driver handles 20 pre-event orders or 15 post-event orders
   
-  CRITICAL INSIGHT RULES:
-  - Always name specific events by name (e.g., "Lakers game", not "sporting event")
-  - Use simple time format with :00 or :30 only (e.g., "11:30pm", "2:00pm", never "2:18pm")
-  - ALWAYS round times to :00 or :30 for ALL mentions
-  - When multiple events end around the same time, say "around 1:00pm" not specific minutes
-  - Include event location and distance in insights (e.g., "Lakers game in LA (95 miles)")
-- When referring to general time periods, use natural language like "around noon" or "early afternoon"
-  - Write like you're texting a manager, not writing a thesis
-  - Maximum 3 key facts per insight
-  - If mentioning multiple events, name them specifically
-  
-  BAD insights (never write like this):
-  - "Peak post-event orders at 11:36 PM align across multiple venues"
-  - "Surge coincides with overlapping temporal event conclusions"
-  - "Multiple high-capacity events creating compound impact"
-  
-  GOOD insights (write like this):
-  - "Lakers + Bruno Mars concert both end at 11pm tonight"
-  - "Rain starting at 7pm = skip delivery, push carryout hard"
-  - "Slow Tuesday + Beyonce concert = surprise rush at 3pm"`;
+  Response format:
+Generate a JSON response with:
+- insight: Key opportunity to increase sales (max 100 characters)
+- metrics: {
+    expectedOrderIncrease: percentage (0-100)
+    recommendedExtraDrivers: number (0-10)
+    primaryReason: brief explanation
   }
+- action: Specific operational step (max 80 characters)
+- carryoutPromotion: promotion details if weather warrants
+- preOrderCampaign: campaign details if major events upcoming`;
+}
 
   validateResponse(response) {
     // Clean up the insight - replace complex times with simple ones
