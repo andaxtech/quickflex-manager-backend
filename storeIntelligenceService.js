@@ -263,7 +263,15 @@ calculateCarryoutOpportunity(trigger, data) {
       
       // Log all events before filtering
       response.data._embedded.events.forEach(event => {
+        // Ticketmaster provides ISO datetime with timezone
         const eventDate = new Date(event.dates.start.dateTime);
+
+        // Debug logging
+        console.log(`Event ${event.name} time:`, {
+          raw: event.dates.start.dateTime,
+          parsed: eventDate.toISOString(),
+          local: eventDate.toLocaleString()
+        });
         console.log(`  - ${event.name} | ${eventDate.toLocaleDateString()} | Venue: ${event._embedded?.venues?.[0]?.name}`);
       });
 
@@ -1193,9 +1201,15 @@ getStaffingRecommendation(analysis) {
     const now = new Date();
     const offset = this.parseTimezoneOffset(store.timezone);
     
-    // Create a new date adjusted for timezone
-    const utcTime = now.getTime() + (now.getTimezoneOffset() * 60000);
-    const storeTime = new Date(utcTime + (offset * 60000));
+    // Fix: Don't add getTimezoneOffset(), just apply the store's offset directly
+    const storeTime = new Date(now.getTime() + (offset * 60 * 1000));
+    
+    console.log(`Store ${store.id} time calc:`, {
+      utc: now.toISOString(),
+      offset: offset,
+      localTime: storeTime.toISOString(),
+      formatted: storeTime.toLocaleString()
+    });
     
     return storeTime;
   }
@@ -1232,6 +1246,16 @@ getStaffingRecommendation(analysis) {
 
   async generateAIInsight(store, data, context) {
     const prompt = this.buildCleanPrompt(store, data, context);
+
+    async generateAIInsight(store, data, context) {
+      // Add debug logging
+      console.log(`🕐 Store ${store.id} context:`, {
+        localTime: context.localTime,
+        hour: context.hour,
+        timezone: store.timezone
+      });
+      
+      const prompt = this.buildCleanPrompt(store, data, context);
     
     try {
       // Rate limiting
@@ -1276,9 +1300,11 @@ getStaffingRecommendation(analysis) {
 
   buildCleanPrompt(store, data, context) {
     const factors = this.identifyKeyFactors(data, context);
-    const timeStr = context.localTime.toLocaleTimeString('en-US', { 
+    const timeStr = context.localTime.toLocaleString('en-US', { 
       hour: '2-digit', 
-      minute: '2-digit' 
+      minute: '2-digit',
+      hour12: true,
+      timeZone: 'America/Los_Angeles' // Force Pacific timezone
     });
     
     const prompt = [
