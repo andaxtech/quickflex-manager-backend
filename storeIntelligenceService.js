@@ -276,6 +276,7 @@ const response = await axios.get('https://app.ticketmaster.com/discovery/v2/even
 
       const processedEvents = response.data._embedded.events
         .map(event => this.processEvent(event, store))
+        .filter(event => event !== null); // Remove events that failed distance check
         .filter(event => {
           // Validate distance
           const venue = event.venue;
@@ -642,6 +643,21 @@ const response = await axios.get('https://app.ticketmaster.com/discovery/v2/even
     const venue = event._embedded?.venues?.[0];
     const capacity = parseInt(venue?.capacity) || 5000;
     
+    // Validate venue distance
+    if (venue?.location?.latitude && venue?.location?.longitude) {
+      const distance = this.calculateDistance(
+        store.lat,
+        store.lng,
+        parseFloat(venue.location.latitude),
+        parseFloat(venue.location.longitude)
+      );
+      
+      if (distance > 25) {
+        console.log(`⚠️ Event "${event.name}" at ${venue.name} is ${distance.toFixed(1)} miles away - TOO FAR`);
+        return null; // Will be filtered out
+      }
+    }
+    
     // Add venue location to the processed event
     const venueLat = venue?.location?.latitude;
     const venueLng = venue?.location?.longitude;
@@ -652,9 +668,20 @@ const response = await axios.get('https://app.ticketmaster.com/discovery/v2/even
     // Get store's current time in UTC
     const nowUTC = new Date();
     
-    // Calculate hours until event (both in UTC, so comparison is valid)
-    const hoursUntilEvent = (eventDateUTC - nowUTC) / (1000 * 60 * 60);
-    const daysUntilEvent = Math.floor(hoursUntilEvent / 24);
+    // Get current UTC time properly
+      const nowUTC = new Date();
+      const deviceOffset = nowUTC.getTimezoneOffset() * 60 * 1000;
+      const actualUTC = new Date(nowUTC.getTime() + deviceOffset);
+
+      // Calculate hours until event using proper UTC comparison
+      const hoursUntilEvent = (eventDateUTC - actualUTC) / (1000 * 60 * 60);
+      const daysUntilEvent = Math.floor(hoursUntilEvent / 24);
+
+      console.log(`⏰ Event timing for ${event.name}:`, {
+        eventUTC: eventDateUTC.toISOString(),
+        currentUTC: actualUTC.toISOString(),
+        hoursUntil: hoursUntilEvent.toFixed(1)
+      });
     
     // For "today" check, we need to compare dates in store's timezone
     const offsetMinutes = this.parseTimezoneOffset(store.timezone);
@@ -1253,8 +1280,18 @@ await this.enforceRateLimit('google');
     const now = new Date();
     const offsetMinutes = this.parseTimezoneOffset(store.timezone);
     
-    // Use the standard formula: storeLocalTime = UTC + offsetMinutes
-    const storeLocalTimeMs = now.getTime() + (offsetMinutes * 60 * 1000);
+    // Get UTC time first
+    const utcMs = now.getTime() + (now.getTimezoneOffset() * 60 * 1000);
+    
+    // Then add store's offset
+    const storeLocalTimeMs = utcMs + (offsetMinutes * 60 * 1000);
+    
+    console.log(`⏰ Time calculation for store ${store.id}:`, {
+      deviceTime: now.toLocaleString(),
+      utcTime: new Date(utcMs).toISOString(),
+      storeOffset: offsetMinutes,
+      storeLocalTime: new Date(storeLocalTimeMs).toLocaleString()
+    });
     
     return new Date(storeLocalTimeMs);
   }
