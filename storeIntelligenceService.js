@@ -275,25 +275,8 @@ const response = await axios.get('https://app.ticketmaster.com/discovery/v2/even
       });
 
       const processedEvents = response.data._embedded.events
-        .map(event => this.processEvent(event, store))
-        .filter(event => event !== null); // Remove events that failed distance check
-        .filter(event => {
-          // Validate distance
-          const venue = event.venue;
-          if (venue && venue.location?.latitude && venue.location?.longitude) {
-            const distance = this.calculateDistance(
-              store.lat, 
-              store.lng, 
-              parseFloat(venue.location.latitude), 
-              parseFloat(venue.location.longitude)
-            );
-            if (distance > 25) {
-              console.log(`⚠️ Filtering out distant event: ${event.name} at ${venue} (${distance.toFixed(1)} miles away)`);
-              return false;
-            }
-          }
-          return true;
-        });
+  .map(event => this.processEvent(event, store))
+  .filter(event => event !== null); // Remove events that failed distance check
 
       // Log impact scores
       console.log('📊 Event impact scores:');
