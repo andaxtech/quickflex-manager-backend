@@ -61,9 +61,7 @@ class StoreIntelligenceService {
       cashLimit: store.cash_limit,
       deliveryFee: store.delivery_fee,
       waitTime: store.estimated_wait_minutes || 25,
-      minOrder: store.minimum_delivery_order_amount || 15,
-      openShifts: store.shifts?.open || 0,
-      bookedShifts: store.shifts?.booked || 0
+      minOrder: store.minimum_delivery_order_amount || 15
     };
   }
 
@@ -99,14 +97,6 @@ class StoreIntelligenceService {
     };
     
     
-    // Add delivery capacity analysis after we have weather data
-      if (collectedData.weather) {
-        const capacity = await this.analyzeDeliveryCapacity(store, {
-          weather: collectedData.weather,
-          context: await this.getStoreContext(store)
-        });
-        collectedData.deliveryCapacity = capacity;
-      }
 
       // Check for upcoming holidays
       const upcomingHoliday = await this.getUpcomingHoliday();
@@ -151,10 +141,6 @@ calculateCarryoutOpportunity(trigger, data) {
       rain: { discount: 30, margin: 15, message: "Beat the rain! 30% off when you pick up" },
       severe: { discount: 50, margin: 15, message: "Skip the storm! 50% off all carryout orders" }
     },
-    staffing: {
-      multipleOpenShifts: { discount: 30, margin: 12, message: "Quick pickup special - 30% off carryout" },
-      weatherPlusStaffing: { discount: 40, margin: 12, message: "Skip the wait - 40% off carryout today!" }
-    },
     slowPeriod: {
       afternoon: { discount: 20, margin: 10, message: "Afternoon special - 20% off carryout" }
     }
@@ -166,10 +152,6 @@ calculateCarryoutOpportunity(trigger, data) {
     opportunity = { ...opportunities.weather.severe, reason: 'severe weather' };
   } else if (trigger === 'weather' && data.isRaining) {
     opportunity = { ...opportunities.weather.rain, reason: 'rain' };
-  } else if (trigger === 'staffing' && data.weatherMultiplier > 1.2 && data.openShiftsAvailable > 0) {
-    opportunity = { ...opportunities.staffing.weatherPlusStaffing, reason: 'weather impact + open shifts' };
-  } else if (trigger === 'staffing' && data.openShiftsAvailable > 2) {
-    opportunity = { ...opportunities.staffing.multipleOpenShifts, reason: 'multiple open shifts' };
   } else if (trigger === 'slowPeriod' && data.name === 'afternoon') {
     opportunity = { ...opportunities.slowPeriod.afternoon, reason: 'slow period' };
   }
@@ -643,7 +625,6 @@ calculateCarryoutOpportunity(trigger, data) {
       urgency,
       targetOrders,
       suggestedCampaign: this.getPreOrderCampaign(event),
-      estimatedRevenue: targetOrders * 25
     };
   }
 
@@ -1079,49 +1060,6 @@ await this.enforceRateLimit('google');
     return analysis;
   }
 
-//find delivery capacity
-async analyzeDeliveryCapacity(store, data) {
-  // We only know about ADDITIONAL drivers, not base staffing
-  const capacityAnalysis = {
-    additionalDriversProvided: store.bookedShifts || 0,
-    openShiftsAvailable: store.openShifts || 0,
-    weatherMultiplier: 1,
-    utilizationRate: null // We can't calculate this without knowing base staffing
-  };
-  
-  // Adjust for weather impact
-  if (data.weather?.isRaining) {
-    capacityAnalysis.weatherMultiplier = 1.3; // 30% more orders expected
-  }
-  if (data.weather?.isSevere) {
-    capacityAnalysis.weatherMultiplier = 1.5; // 50% more orders expected
-  }
-
-  // Instead of calculating utilization, assess staffing needs
-  capacityAnalysis.staffingAssessment = {
-    weatherImpact: capacityAnalysis.weatherMultiplier > 1,
-    additionalDriversNeeded: capacityAnalysis.openShiftsAvailable > 0,
-    recommendation: this.getStaffingRecommendation(capacityAnalysis)
-  };
-
-  // Determine if carryout promotion is needed based on weather/events, not capacity
-  if (capacityAnalysis.weatherMultiplier > 1.2 || capacityAnalysis.openShiftsAvailable > 2) {
-    capacityAnalysis.carryoutOpportunity = this.calculateCarryoutOpportunity('staffing', capacityAnalysis);
-  }
-
-  return capacityAnalysis;
-}
-
-getStaffingRecommendation(analysis) {
-  if (analysis.openShiftsAvailable === 0) {
-    return "All additional shifts filled";
-  } else if (analysis.weatherMultiplier > 1.3) {
-    return `Fill ${analysis.openShiftsAvailable} open shifts - weather driving demand`;
-  } else if (analysis.openShiftsAvailable > 2) {
-    return "Multiple shifts available - consider carryout promotions";
-  }
-  return "Monitor and fill shifts as needed";
-}
 
 
 
@@ -1199,12 +1137,12 @@ getStaffingRecommendation(analysis) {
 
   getStoreLocalTime(store) {
     const now = new Date();
-    const offset = this.parseTimezoneOffset(store.timezone);
+    const offsetMinutes = this.parseTimezoneOffset(store.timezone);
     
-    // Fix: Don't add getTimezoneOffset(), just apply the store's offset directly
-    const storeTime = new Date(now.getTime() + (offset * 60 * 1000));
+    // Use the standard formula: storeLocalTime = UTC + offsetMinutes
+    const storeLocalTimeMs = now.getTime() + (offsetMinutes * 60 * 1000);
     
-    return storeTime;
+    return new Date(storeLocalTimeMs);
   }
 
   parseTimezoneOffset(timezone) {
@@ -1218,6 +1156,23 @@ getStaffingRecommendation(analysis) {
     const minutes = parseInt(match[3], 10);
     
     return sign * (hours * 60 + minutes);
+  }
+  
+  formatStoreLocalTime(date, store) {
+    if (!date) return '';
+    
+    const offsetMinutes = this.parseTimezoneOffset(store.timezone);
+    const storeLocalTimeMs = date.getTime() + (offsetMinutes * 60 * 1000);
+    
+    // Manual extraction to avoid timezone issues
+    const totalMinutes = Math.floor(storeLocalTimeMs / 60000);
+    const dayMinutes = ((totalMinutes % (24 * 60)) + (24 * 60)) % (24 * 60);
+    const hours = Math.floor(dayMinutes / 60);
+    const minutes = dayMinutes % 60;
+    const isPM = hours >= 12;
+    const displayHours = hours === 0 ? 12 : hours > 12 ? hours - 12 : hours;
+    
+    return `${displayHours}:${minutes.toString().padStart(2, '0')} ${isPM ? 'PM' : 'AM'}`;
   }
 
   // ADD THESE MISSING METHODS HERE
@@ -1290,18 +1245,19 @@ getStaffingRecommendation(analysis) {
 
   buildCleanPrompt(store, data, context) {
     const factors = this.identifyKeyFactors(data, context);
-    const timeStr = context.localTime.toLocaleString('en-US', { 
-      hour: '2-digit', 
-      minute: '2-digit',
-      hour12: true,
-      timeZone: 'America/Los_Angeles' // Force Pacific timezone
-    });
+    // Manual extraction to avoid device timezone issues
+    const totalMinutes = Math.floor(context.localTime.getTime() / 60000);
+    const dayMinutes = ((totalMinutes % (24 * 60)) + (24 * 60)) % (24 * 60);
+    const hours = Math.floor(dayMinutes / 60);
+    const minutes = dayMinutes % 60;
+    const isPM = hours >= 12;
+    const displayHours = hours === 0 ? 12 : hours > 12 ? hours - 12 : hours;
+    const timeStr = `${displayHours}:${minutes.toString().padStart(2, '0')} ${isPM ? 'PM' : 'AM'}`;
     
     const prompt = [
       `Store #${store.id} in ${store.city}, ${store.state}`,
       `Current time: ${timeStr}`,
       `Store type: ${context.type}`,
-      `Staff available: ${store.openShifts} open shifts, ${store.bookedShifts} booked`,
       '',
       'CURRENT CONDITIONS:'
     ];
@@ -1328,10 +1284,10 @@ getStaffingRecommendation(analysis) {
             if (event.preEventWindow && event.postEventWindow) {
               prompt.push(
                 `- ${event.name} @ ${event.venue} starts at ${event.time}`,
-                `  Pre-event orders: ${event.preEventWindow?.start.toLocaleTimeString()} - ${event.preEventWindow?.end.toLocaleTimeString()}`,
+                `  Pre-event orders: ${this.formatStoreLocalTime(event.preEventWindow?.start, store)} - ${this.formatStoreLocalTime(event.preEventWindow?.end, store)}`,
                 `  Expected: ${event.preEventWindow?.expectedOrders} orders, need ${event.preEventWindow?.staffingNeeded} extra drivers`,
-                `  Post-event rush: ${event.postEventWindow?.start.toLocaleTimeString()} - ${event.postEventWindow?.end.toLocaleTimeString()}`,
-                `  Peak at: ${event.postEventWindow?.peakTime?.toLocaleTimeString() || 'TBD'}, expect ${event.postEventWindow?.expectedOrders || 0} orders`
+                `  Post-event rush: ${this.formatStoreLocalTime(event.postEventWindow?.start, store)} - ${this.formatStoreLocalTime(event.postEventWindow?.end, store)}`,
+                `  Peak at: ${event.postEventWindow?.peakTime ? this.formatStoreLocalTime(event.postEventWindow.peakTime, store) : 'TBD'}, expect ${event.postEventWindow?.expectedOrders || 0} orders`
               );
             } else {
               // Fallback for events without window data
@@ -1344,8 +1300,8 @@ getStaffingRecommendation(analysis) {
             if (event.postEventWindow) {
               prompt.push(
                 `- ${event.name} IN PROGRESS/ENDING SOON`,
-                `  PREPARE FOR RUSH: Peak expected at ${event.postEventWindow?.peakTime?.toLocaleTimeString() || 'soon'}`,
-                `  Need ${event.postEventWindow?.staffingNeeded || 0} drivers ready NOW`
+                `  Post-event orders expected to peak around ${event.postEventWindow?.peakTime ? this.formatStoreLocalTime(event.postEventWindow.peakTime, store) : 'event end'}`,
+                `  Consider staffing ${event.postEventWindow?.staffingNeeded || 0} additional drivers`
               );
             } else {
               prompt.push(
@@ -1358,12 +1314,13 @@ getStaffingRecommendation(analysis) {
       }
       
       if (upcomingEvents.length > 0) {
-        prompt.push(``, `NEXT 7 DAYS - STAFFING ALERTS:`);
+        prompt.push(``, `UPCOMING EVENTS - NEXT 7 DAYS:`);
         upcomingEvents.slice(0, 3).forEach(event => {
           const dayName = event.date.toLocaleDateString('en-US', { weekday: 'long' });
+          const dateStr = event.date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
           prompt.push(
-            `- ${dayName}: ${event.name} (${event.capacity.toLocaleString()} people)`,
-            `  Schedule ${(event.preEventWindow?.staffingNeeded || 0) + (event.postEventWindow?.staffingNeeded || 0)} extra drivers for ${event.time}`
+            `- ${dayName} ${dateStr}: ${event.name} at ${event.venue}`,
+            `  Event time: ${event.time}, estimated ${Math.round(event.capacity * 0.05 * 100) / 100}% order increase`
           );
         });
       }
@@ -1395,15 +1352,15 @@ getStaffingRecommendation(analysis) {
       );
     }
 
+    
     // Add carryout promotion section
-    if (data.weather?.carryoutOpportunity || data.deliveryCapacity?.carryoutOpportunity) {
+if (data.weather?.carryoutOpportunity) {
   prompt.push(
     '',
     'CARRYOUT PROMOTION NEEDED:',
     `- Weather condition: ${data.weather?.condition}`,
-    `- Staffing: ${data.deliveryCapacity?.additionalDriversProvided || 0} additional drivers, ${data.deliveryCapacity?.openShiftsAvailable || 0} open shifts`,
-`- Weather impact multiplier: ${data.deliveryCapacity?.weatherMultiplier || 1}x`,
-    `- Action: Push carryout with aggressive discounting`
+    `- Reason: ${data.weather.carryoutOpportunity.reason}`,
+    `- Suggested promotion: ${data.weather.carryoutOpportunity.message}`
   );
 }
 
@@ -1437,7 +1394,7 @@ prompt.push(
   '    carryoutPotential: percentage of orders to redirect to carryout',
   '    preOrderTarget: number of pre-orders to target',
   '  }',
-  '- action: What to do RIGHT NOW with specific reason mentioned (e.g. "Post mist warning + carryout deal on social", "Staff up by 5pm for 7pm Lakers game") (max 80 chars)',
+  '- action: Suggested action with event/reason mentioned (e.g. "Consider extra drivers for 7pm Lakers game", "Weather indicates potential for carryout promotion") (max 80 chars)',
   '- carryoutPromotion: specific carryout offer if applicable',
   '- preOrderCampaign: specific pre-order action if applicable'
 );
@@ -1489,16 +1446,13 @@ if (eventImpact.isMajor) {
       factors.push(`Expected ${data.weather.carryoutOpportunity.margin}% margin improvement vs delivery`);
     }
 
-if (data.deliveryCapacity?.carryoutOpportunity) {
-  factors.push(`${data.deliveryCapacity.openShiftsAvailable} open shifts available - ${data.deliveryCapacity.carryoutOpportunity.message}`);
-}
 
 // NEW: Pre-order campaigns
 const eventsWithPreOrder = data.events.filter(e => e.preOrderOpportunity?.isActive);
 if (eventsWithPreOrder.length > 0) {
   eventsWithPreOrder.forEach(event => {
     factors.push(`Pre-order opportunity: ${event.name} in ${event.daysUntilEvent} days (${event.capacity} attendees)`);
-    factors.push(`- Target ${event.preOrderOpportunity.targetOrders} orders, ~$${event.preOrderOpportunity.estimatedRevenue} revenue`);
+    factors.push(`- Target ${event.preOrderOpportunity.targetOrders} orders based on ${event.capacity} attendees`);
   });
 }
 
@@ -1526,10 +1480,12 @@ if (eventsWithPreOrder.length > 0) {
   
   Guidelines:
   - Be specific and practical
-  - Focus on immediate actions the manager can take
+  - Suggest actions managers can consider, not commands
   - Keep recommendations realistic and conservative
   - Base all insights on the provided data only
-  '- TODAY\'S EVENTS: Always specify exact timing for pre-event (3hrs-30min before) and post-event (0-2hrs after) rushes',
+  - Never use urgency words like "immediately", "ASAP", "now", "urgent"
+  - Use respectful language: "consider", "patterns suggest", "event indicates"
+  '- TODAY\'S EVENTS: Provide event name, venue, and timing windows for planning',
 '- Pre-event window: 2% of attendees order (groups ordering for tailgates/parties)',
 '- Post-event window: 3% of attendees order (hungry after event)',
 '- Peak hits 45 minutes after event ends - this is CRITICAL timing',
@@ -1545,7 +1501,7 @@ if (eventsWithPreOrder.length > 0) {
   validateResponse(response) {
     return {
       insight: String(response.insight || "Monitor operations closely").substring(0, 100),
-      severity: ["info", "warning", "critical"].includes(response.severity) 
+      severity: ["info", "warning", "high"].includes(response.severity) 
         ? response.severity : "info",
         metrics: {
           expectedOrderIncrease: Math.min(100, Math.max(0, 
@@ -1560,7 +1516,7 @@ if (eventsWithPreOrder.length > 0) {
           preOrderTarget: Math.max(0, 
             Math.floor(Number(response.metrics?.preOrderTarget) || 0))
         },
-        action: String(response.action || "Maintain current staffing").substring(0, 120), // Increased for event details
+        action: String(response.action || "Maintain current staffing").substring(0, 80),
           eventActions: response.eventActions ? {
             today: response.eventActions.today || [],
             thisWeek: response.eventActions.thisWeek || []
