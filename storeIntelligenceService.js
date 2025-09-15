@@ -1238,17 +1238,14 @@ getStaffingRecommendation(analysis) {
   }
 
   async generateAIInsight(store, data, context) {
+    // Add debug logging
+    console.log(`🕐 Store ${store.id} context:`, {
+      localTime: context.localTime,
+      hour: context.hour,
+      timezone: store.timezone
+    });
+    
     const prompt = this.buildCleanPrompt(store, data, context);
-
-    async generateAIInsight(store, data, context) {
-      // Add debug logging
-      console.log(`🕐 Store ${store.id} context:`, {
-        localTime: context.localTime,
-        hour: context.hour,
-        timezone: store.timezone
-      });
-      
-      const prompt = this.buildCleanPrompt(store, data, context);
     
     try {
       // Rate limiting
