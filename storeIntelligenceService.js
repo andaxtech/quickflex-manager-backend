@@ -1175,6 +1175,30 @@ await this.enforceRateLimit('google');
     return `${displayHours}:${minutes.toString().padStart(2, '0')} ${isPM ? 'PM' : 'AM'}`;
   }
 
+  simplifyTimeFormat(timeStr) {
+    // Convert "11:36 PM" to "11:30pm" (round to nearest 15 min)
+    const match = timeStr.match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i);
+    if (!match) return timeStr;
+    
+    let hours = parseInt(match[1]);
+    let minutes = parseInt(match[2]);
+    const period = match[3].toLowerCase();
+    
+    // Round to nearest 15 minutes
+    minutes = Math.round(minutes / 15) * 15;
+    if (minutes === 60) {
+      hours += 1;
+      minutes = 0;
+    }
+    
+    // Format simply
+    if (minutes === 0) {
+      return `${hours}${period}`;
+    } else {
+      return `${hours}:${minutes.toString().padStart(2, '0')}${period}`;
+    }
+  }
+
   // ADD THESE MISSING METHODS HERE
   isPeakHour(hour) {
     return hour >= 17 && hour <= 20;
@@ -1283,7 +1307,7 @@ await this.enforceRateLimit('google');
             // Check if event has the window data before accessing it
             if (event.preEventWindow && event.postEventWindow) {
               prompt.push(
-                `- ${event.name} @ ${event.venue} starts at ${event.time}`,
+                `- EVENT: "${event.name}" at ${event.venue}, starts ${event.time}`,
                `  Pre-event window: ${this.formatStoreLocalTime(event.preEventWindow?.start, store)} - ${this.formatStoreLocalTime(event.preEventWindow?.end, store)}`,
               `  Consider staffing adjustments based on event size`,
               `  Post-event rush: ${this.formatStoreLocalTime(event.postEventWindow?.start, store)} - ${this.formatStoreLocalTime(event.postEventWindow?.end, store)}`,
@@ -1381,6 +1405,15 @@ if (preOrderEvents.length > 0) {
 
 prompt.push(
   '',
+  'INSIGHT EXAMPLES based on current data:',
+  '- If events ending together: "Lakers + Concert both end 11pm - double rush coming"',
+  '- If rain during event: "Rain hits right when Lakers fans leave - delivery surge"',
+  '- If unusual timing: "Tuesday concert rare - catch competitors sleeping"',
+  ''
+);
+
+prompt.push(
+  '',
   'IMPORTANT: Only suggest carryout promotions for: rain, severe weather, snow, or high traffic delays.',
   'Do NOT suggest promotions for: haze, clouds, mist, or other mild weather conditions.',
   '',
@@ -1394,7 +1427,7 @@ prompt.push(
   '- metrics: {',
   '    expectedOrderIncrease: 0-100 percentage',
   '    recommendedExtraDrivers: 0-10',
-  '    primaryReason: MUST include specific details like "Mist at 70°F affecting visibility" or "Lakers vs Warriors game at 7pm with 20,000 attendees"',
+  '- primaryReason: Simple explanation with event names (e.g., "Lakers game ending" not "sporting event conclusion")',
   '  }',
   '- action: Suggested action with event/reason mentioned (e.g. "Consider extra drivers for 7pm Lakers game", "Weather indicates potential for carryout promotion") (max 80 chars)',
   '- carryoutPromotion: specific carryout offer if applicable',
@@ -1539,14 +1572,37 @@ if (event.date.getDay() >= 1 && event.date.getDay() <= 4) {
   Examples of valuable insights:
   - "Post-game traffic gives you 30-min head start on competitors"
   - "Rain + Taylor Swift concert = perfect storm for record night"
-  - "Competitor's driver shortage during tomorrow's game = your opportunity"
+  - "Competitor's driver shortage during tomorrow's game = your opportunity"  
   - "Early close risk: similar Tuesday patterns showed 70% order drop"
-  - "Pre-position for 6:45pm surge - concert parking starts at 6:30"`;
+  - "Pre-position for 6:45pm surge - concert parking starts at 6:30"
+  
+  CRITICAL INSIGHT RULES:
+  - Always name specific events by name (e.g., "Lakers game", not "sporting event")
+  - Use simple time format (e.g., "11:30pm", not "23:36")
+  - Write like you're texting a manager, not writing a thesis
+  - Maximum 3 key facts per insight
+  - If mentioning multiple events, name them specifically
+  
+  BAD insights (never write like this):
+  - "Peak post-event orders at 11:36 PM align across multiple venues"
+  - "Surge coincides with overlapping temporal event conclusions"
+  - "Multiple high-capacity events creating compound impact"
+  
+  GOOD insights (write like this):
+  - "Lakers + Bruno Mars concert both end at 11pm tonight"
+  - "Rain starting at 7pm = skip delivery, push carryout hard"
+  - "Slow Tuesday + Beyonce concert = surprise rush at 3pm"`;
   }
 
   validateResponse(response) {
     return {
       insight: String(response.insight || "Monitor operations closely").substring(0, 100),
+      // Clean up the insight - replace complex times with simple ones
+        let cleanInsight = response.insight || "Monitor operations closely";
+        cleanInsight = cleanInsight.replace(/(\d{1,2}:\d{2}\s*[AP]M)/gi, (match) => {
+          return this.simplifyTimeFormat(match);
+        });
+        insight: cleanInsight.substring(0, 100),
       severity: ["info", "warning", "high"].includes(response.severity) 
         ? response.severity : "info",
         metrics: {
