@@ -1207,7 +1207,114 @@ await this.enforceRateLimit('google');
   }
 
   async autoClassifyStore(store) {
-    // Simplified classification logic
+    try {
+      // Step 1: Use Geocoding API to analyze address
+      const geocodeData = await this.getGeocodeData(store);
+      
+      // Check for military/college keywords in address components
+      if (this.hasAddressKeywords(geocodeData, ['base', 'fort', 'camp', 'naval', 'marine', 'afb'])) {
+        return { type: 'military', subType: 'base' };
+      }
+      
+      if (this.hasAddressKeywords(geocodeData, ['university', 'college', 'campus', 'student'])) {
+        return { type: 'college', subType: 'campus' };
+      }
+      
+      // Check for downtown indicators
+      if (this.hasAddressKeywords(geocodeData, ['downtown', 'financial district', 'city center', 'central business'])) {
+        return { type: 'downtown', subType: 'urban' };
+      }
+      
+      // Step 2: Use Places API to verify with density check
+      const placesData = await this.getPlacesDensityData(store);
+      
+      // High density of businesses indicates downtown
+      if (placesData.businessDensity > 15 && placesData.avgRating > 4.0) {
+        return { type: 'downtown', subType: 'urban' };
+      }
+      
+      // Default to suburban
+      return { type: 'suburban', subType: 'standard' };
+      
+    } catch (error) {
+      console.error('Store classification error:', error);
+      // Fallback to original simple logic
+      return this.fallbackClassification(store);
+    }
+  }
+
+  isNearLocation(store, locations) {
+    return locations.some(loc => 
+      this.calculateDistance(store.lat, store.lng, loc.lat, loc.lng) <= loc.radius
+    );
+  }
+
+  async getGeocodeData(store) {
+    const cacheKey = `geocode_${store.id}`;
+    const cached = this.getCached(cacheKey, 86400000); // 24 hour cache
+    if (cached) return cached;
+    
+    try {
+      const response = await axios.get('https://maps.googleapis.com/maps/api/geocode/json', {
+        params: {
+          latlng: `${store.lat},${store.lng}`,
+          key: this.googleMapsKey
+        }
+      });
+      
+      const data = response.data.results[0];
+      this.setCache(cacheKey, data);
+      return data;
+    } catch (error) {
+      console.error('Geocoding API error:', error);
+      return null;
+    }
+  }
+  
+  async getPlacesDensityData(store) {
+    const cacheKey = `places_density_${store.id}`;
+    const cached = this.getCached(cacheKey, 86400000); // 24 hour cache
+    if (cached) return cached;
+    
+    try {
+      const response = await axios.get('https://maps.googleapis.com/maps/api/place/nearbysearch/json', {
+        params: {
+          location: `${store.lat},${store.lng}`,
+          radius: 500, // 500m radius
+          type: 'establishment',
+          key: this.googleMapsKey
+        }
+      });
+      
+      const places = response.data.results;
+      const avgRating = places.reduce((sum, p) => sum + (p.rating || 0), 0) / places.length;
+      
+      const densityData = {
+        businessDensity: places.length,
+        avgRating: avgRating || 0,
+        hasPointsOfInterest: places.some(p => p.types.includes('point_of_interest'))
+      };
+      
+      this.setCache(cacheKey, densityData);
+      return densityData;
+    } catch (error) {
+      console.error('Places API error:', error);
+      return { businessDensity: 0, avgRating: 0 };
+    }
+  }
+  
+  hasAddressKeywords(geocodeData, keywords) {
+    if (!geocodeData || !geocodeData.address_components) return false;
+    
+    const addressText = geocodeData.address_components
+      .map(component => component.long_name.toLowerCase())
+      .join(' ');
+    
+    return keywords.some(keyword => addressText.includes(keyword.toLowerCase()));
+  }
+  
+  fallbackClassification(store) {
+    // Original simple logic as backup
     const militaryBases = this.config.locations.militaryBases[store.state] || [];
     const colleges = this.config.locations.colleges[store.state] || [];
     
@@ -1220,12 +1327,6 @@ await this.enforceRateLimit('google');
     }
     
     return { type: 'suburban', subType: 'standard' };
-  }
-
-  isNearLocation(store, locations) {
-    return locations.some(loc => 
-      this.calculateDistance(store.lat, store.lng, loc.lat, loc.lng) <= loc.radius
-    );
   }
 
   calculateDistance(lat1, lon1, lat2, lon2) {
@@ -1382,6 +1483,7 @@ const utcMs = now.getTime() - (now.getTimezoneOffset() * 60 * 1000);
       // Rate limiting
       await this.enforceRateLimit('general');
       
+      //the AI generation process begins
       const completion = await this.openai.chat.completions.create({
         model: this.config.ai.model || 'gpt-4',
         messages: [
