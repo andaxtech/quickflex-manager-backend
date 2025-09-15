@@ -221,37 +221,36 @@ calculateCarryoutOpportunity(trigger, data) {
       // Rate limit protection for Ticketmaster API
       await this.enforceRateLimit('ticketmaster');
   
-      const response = await axios.get('https://app.ticketmaster.com/discovery/v2/events.json', {
-        params: {
-          apikey: tmApiKey,
-          latlong: `${store.lat},${store.lng}`,
-          radius: '25',
-          unit: 'miles',
-          size: 20,  // Increased from 10
-          sort: 'date,asc',
-          // Get store's current local time
-          const storeNowLocal = this.getStoreCurrentDate(store);
+      // Get store's current local time
+const storeNowLocal = this.getStoreCurrentDate(store);
 
-          // Calculate start of today in store's timezone
-          const storeTodayStart = new Date(storeNowLocal);
-          storeTodayStart.setHours(0, 0, 0, 0);
+// Calculate start of today in store's timezone
+const storeTodayStart = new Date(storeNowLocal);
+storeTodayStart.setHours(0, 0, 0, 0);
 
-          // Calculate 7 days from now in store's timezone
-          const storeWeekEnd = new Date(storeTodayStart);
-          storeWeekEnd.setDate(storeWeekEnd.getDate() + 7);
-          storeWeekEnd.setHours(23, 59, 59, 999);
+// Calculate 7 days from now in store's timezone
+const storeWeekEnd = new Date(storeTodayStart);
+storeWeekEnd.setDate(storeWeekEnd.getDate() + 7);
+storeWeekEnd.setHours(23, 59, 59, 999);
 
-          // Convert back to UTC for API call
-          const offsetMinutes = this.parseTimezoneOffset(store.timezone);
-          const startDateTimeUTC = new Date(storeTodayStart.getTime() - (offsetMinutes * 60 * 1000));
-          const endDateTimeUTC = new Date(storeWeekEnd.getTime() - (offsetMinutes * 60 * 1000));
+// Convert back to UTC for API call
+const offsetMinutes = this.parseTimezoneOffset(store.timezone);
+const startDateTimeUTC = new Date(storeTodayStart.getTime() - (offsetMinutes * 60 * 1000));
+const endDateTimeUTC = new Date(storeWeekEnd.getTime() - (offsetMinutes * 60 * 1000));
 
-          // Then in the params:
-          startDateTime: startDateTimeUTC.toISOString(),
-          endDateTime: endDateTimeUTC.toISOString()
-        },
-        timeout: 5000
-      });
+const response = await axios.get('https://app.ticketmaster.com/discovery/v2/events.json', {
+  params: {
+    apikey: tmApiKey,
+    latlong: `${store.lat},${store.lng}`,
+    radius: '25',
+    unit: 'miles',
+    size: 20,  // Increased from 10
+    sort: 'date,asc',
+    startDateTime: startDateTimeUTC.toISOString(),
+    endDateTime: endDateTimeUTC.toISOString()
+  },
+  timeout: 5000
+});
       
       // Debug logging
       console.log(`🎫 Events API for store ${store.id} (${store.city}):`, {
@@ -426,17 +425,17 @@ calculateCarryoutOpportunity(trigger, data) {
           isPastToday: isToday && hoursUntilEvent < 0,
           source: 'seatgeek',
           preEventWindow: {
-            start: new Date(eventDate.getTime() - (3 * 60 * 60 * 1000)),
-            end: new Date(eventDate.getTime() - (30 * 60 * 1000)),
-            expectedOrders: Math.floor(capacity * 0.005),
-            staffingNeeded: Math.ceil((capacity * 0.005) / 20)
+            start: new Date(eventDateLocal.getTime() - (3 * 60 * 60 * 1000)),
+            end: new Date(eventDateLocal.getTime() - (30 * 60 * 1000)),
+            expectedOrders: Math.floor((event.venue.capacity || 5000) * 0.005),
+            staffingNeeded: Math.ceil(((event.venue.capacity || 5000) * 0.005) / 20)
           },
           postEventWindow: {
-            start: eventDate,
-            end: new Date(eventDate.getTime() + (2 * 60 * 60 * 1000)),
-            peakTime: new Date(eventDate.getTime() + (45 * 60 * 1000)),
-            expectedOrders: Math.floor(capacity * 0.01),
-            staffingNeeded: Math.ceil((capacity * 0.01) / 15)
+            start: eventDateLocal,
+            end: new Date(eventDateLocal.getTime() + (2 * 60 * 60 * 1000)),
+            peakTime: new Date(eventDateLocal.getTime() + (45 * 60 * 1000)),
+            expectedOrders: Math.floor((event.venue.capacity || 5000) * 0.01),
+            staffingNeeded: Math.ceil(((event.venue.capacity || 5000) * 0.01) / 15)
           }
         };
       });
