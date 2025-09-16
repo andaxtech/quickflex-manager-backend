@@ -1810,12 +1810,12 @@ validateResponse(response) {
   let cleanInsight = response.insight || "Monitor operations closely";
   
   // Ensure insight follows the expected pattern
-  if (!cleanInsight.includes('Expect')) {
-    // If AI didn't follow format, restructure it
-    const orderIncrease = response.metrics?.expectedOrderIncrease || 0;
-    const orderCount = response.metrics?.expectedOrderCount || Math.floor(orderIncrease * 3);
-    cleanInsight = cleanInsight + `. Expect ${orderIncrease}% (${orderCount} order) change.`;
-  }
+if (!cleanInsight.toLowerCase().includes('expect')) {
+  // If AI didn't follow format, restructure it
+  const orderIncrease = response.metrics?.expectedOrderIncrease || 0;
+  const orderCount = response.metrics?.expectedOrderCount || Math.floor(orderIncrease * 3);
+  cleanInsight = cleanInsight + `. Expect ${orderIncrease}% (${orderCount} order) change.`;
+}
   
   // First, replace specific times with rounded versions
   cleanInsight = cleanInsight.replace(/(\d{1,2}):(\d{2})\s*(AM|PM)/gi, (match, hours, minutes, period) => {
