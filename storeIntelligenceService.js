@@ -650,26 +650,24 @@ const response = await axios.get('https://app.ticketmaster.com/discovery/v2/even
     const venueLng = venue?.location?.longitude;
     
     // Parse event date as UTC
-      const eventDateUTC = new Date(event.dates.start.dateTime);
+      // Parse event date as UTC
+const eventDateUTC = new Date(event.dates.start.dateTime);
 
-      // Get current UTC time (Date() already returns UTC internally)
+// Get current UTC time (Date() already returns UTC internally)
 const nowUTC = new Date();
 
 // Calculate hours until event directly
 const hoursUntilEvent = (eventDateUTC - nowUTC) / (1000 * 60 * 60);
-      const daysUntilEvent = Math.floor(hoursUntilEvent / 24);
+const daysUntilEvent = Math.floor(hoursUntilEvent / 24);
 
-      console.log(`⏰ Event timing for ${event.name}:`, {
-        eventUTC: eventDateUTC.toISOString(),
-        currentUTC: actualUTC.toISOString(),
-        hoursUntil: hoursUntilEvent.toFixed(1)
-      });
-    
-    // For "today" check, use store's timezone from database
-      const offsetMinutes = this.parseTimezoneOffset(store.timezone);
+console.log(`⏰ Event timing for ${event.name}:`, {
+  eventUTC: eventDateUTC.toISOString(),
+  currentUTC: nowUTC.toISOString(),
+  hoursUntil: hoursUntilEvent.toFixed(1)
+});
 
-      /// Get current UTC time
-const nowUTC = new Date();
+// For "today" check, use store's timezone from database
+const offsetMinutes = this.parseTimezoneOffset(store.timezone);
 
 // Convert to store local time for "today" calculation
 const storeNowMs = nowUTC.getTime() + (offsetMinutes * 60 * 1000);
