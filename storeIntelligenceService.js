@@ -1752,14 +1752,29 @@ if (event.date.getDay() >= 1 && event.date.getDay() <= 4) {
   - 1 driver handles 20 pre-event orders or 15 post-event orders
   
   Response format:
-Generate a JSON response with:
-- insight: call one thing the manager should do now to increase sales. include name of event, venue and end time. (max 200 characters)
-- metrics: {
-    expectedOrderIncrease: percentage (0-100)
-    recommendedExtraDrivers: number (0-10)
-    primaryReason: brief explanation
-  }
-- action: call one thing that if they dont do, miussed opoortunity, include name of event. (max 200 characters)
+{
+  "insight": "Write ONE clear sentence that includes: [Event/Condition] at [specific time] - [recommended action] because [brief reason]. Expected: [X%] ([Y orders]) increase. [Any other key condition].",
+  "metrics": {
+    "expectedOrderIncrease": percentage,
+    "expectedOrderCount": number,
+    "recommendedExtraDrivers": number,
+    "confidence": "high/medium/low"
+  },
+  "action": "Most critical action in 10 words or less"
+}
+
+Example insight formats:
+- "Lakers game ends 7pm tomorrow - staff up for 8pm rush. Expect 5% (15 order) increase. Weather clear, light traffic."
+- "Heavy rain starting 5pm today - add 2 drivers by 4:30pm. Expect 20% (40 order) surge. Major traffic delays likely."
+- "Taylor Swift concert at Arena ends 10pm Friday - schedule 3 extra drivers 9-11pm. Expect 35% (80 order) spike. Pre-position inventory."
+
+Rules for insight:
+1. Always lead with the triggering event/condition and its time
+2. State the recommended action clearly
+3. Include percentage AND absolute number for orders
+4. End with supporting conditions (weather/traffic)
+5. Keep under 200 characters
+6. Use natural time expressions (7pm not 19:00)
 - carryoutPromotion: promotion details if weather warrants
 - preOrderCampaign: campaign details if major events upcoming`;
 }
