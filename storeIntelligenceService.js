@@ -309,7 +309,7 @@ const response = await axios.get('https://app.ticketmaster.com/discovery/v2/even
         // Cache empty result for 5 minutes to avoid hitting rate limit
         this.setCache(cacheKey, [], 300000);
       } else {
-        console.error('Events API error:', error.message);
+        console.error(`Ticketmaster API error for store ${store.id}:`, error.message);
       }
       return [];
     }
@@ -783,18 +783,27 @@ const timeStr = `${displayHours}:${minutes.toString().padStart(2, '0')} ${isPM ?
   calculateEventImpact(capacity, eventDate) {
     let impact = 0;
     
-    // Capacity impact
-    if (capacity > 20000) impact += 0.6;
-    else if (capacity > 10000) impact += 0.4;
-    else if (capacity > 5000) impact += 0.2;
+    // Capacity impact (adjusted for more realistic values)
+    if (capacity >= 20000) impact += 0.6;
+    else if (capacity >= 10000) impact += 0.4;
+    else if (capacity >= 5000) impact += 0.2;
+    else if (capacity >= 1000) impact += 0.1; // Added tier for smaller venues
     
     // Timing impact
     const hour = eventDate.getHours();
-    if (hour >= 18 && hour <= 22) impact += 0.3; // Prime dinner time
+    if (hour >= 17 && hour <= 21) impact += 0.3; // Prime dinner time
+    else if (hour >= 11 && hour <= 13) impact += 0.1; // Lunch time
     
     // Weekend impact
     const day = eventDate.getDay();
     if (day === 5 || day === 6) impact += 0.1;
+    
+    // Today bonus - events happening today are more relevant
+    const now = new Date();
+    const hoursUntilEvent = (eventDate - now) / (1000 * 60 * 60);
+    if (hoursUntilEvent >= 0 && hoursUntilEvent <= 24) {
+      impact += 0.2;
+    }
     
     return Math.min(impact, 1);
   }
