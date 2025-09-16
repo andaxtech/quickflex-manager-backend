@@ -1637,9 +1637,7 @@ return {
   }
   
   buildLunchPrompt(store, data, context) {
-    // Similar structure but focused on lunch operations
     const timeStr = this.formatTimeForPrompt(context);
-    const factors = this.identifyKeyFactors(data, context);
     
     const prompt = [
       `Store #${store.id} - LUNCH OPERATIONS`,
@@ -1648,12 +1646,47 @@ return {
       'CURRENT CONDITIONS:'
     ];
     
-    // ... rest of lunch-specific prompt building
+    // Weather impact on lunch
+    if (data.weather) {
+      prompt.push(`- Weather: ${data.weather.temp}°F, ${data.weather.condition}`);
+      if (data.weather.isRaining) {
+        prompt.push('  → Rain will increase delivery demand, reduce carryout');
+      }
+    }
+    
+    // Traffic for lunch deliveries
+    if (data.traffic && data.traffic.affectsDelivery) {
+      prompt.push(`- Traffic delays: ${data.traffic.delayMinutes} minutes`);
+      prompt.push('  → Adjust promise times and driver count');
+    }
+    
+    // Current/imminent events
+    const lunchEvents = (data.events || []).filter(e => 
+      e.hoursUntilEvent >= -1 && e.hoursUntilEvent <= 3
+    );
+    
+    if (lunchEvents.length > 0) {
+      prompt.push('', 'ACTIVE/IMMINENT EVENTS:');
+      lunchEvents.forEach(event => {
+        if (event.hoursUntilEvent <= 0) {
+          prompt.push(`- ${event.name} happening NOW - expect surge`);
+        } else {
+          prompt.push(`- ${event.name} in ${Math.round(event.hoursUntilEvent)} hours`);
+        }
+      });
+    }
+    
+    // Slow period considerations
+    if (data.slowPeriod?.currentPeriod?.name === 'afternoon') {
+      prompt.push('', 'AFTERNOON SLOW PERIOD:');
+      prompt.push('- Consider carryout promotions');
+      prompt.push('- Optimize labor allocation');
+    }
+    
     return prompt.join('\n');
   }
   
   buildAfternoonPrompt(store, data, context) {
-    // Afternoon transition focus
     const timeStr = this.formatTimeForPrompt(context);
     
     const prompt = [
@@ -1663,7 +1696,50 @@ return {
       'DINNER PREP STATUS:'
     ];
     
-    // ... rest of afternoon-specific prompt building
+    // Weather forecast for dinner
+    if (data.weather) {
+      prompt.push(`- Evening weather: ${data.weather.temp}°F, ${data.weather.condition}`);
+      if (data.weather.isSevere) {
+        prompt.push('  → Severe weather expected - prepare for major surge');
+      }
+    }
+    
+    // Evening events
+    const dinnerEvents = (data.events || []).filter(e => 
+      e.hoursUntilEvent > 2 && e.hoursUntilEvent <= 7
+    );
+    
+    if (dinnerEvents.length > 0) {
+      prompt.push('', 'DINNER PERIOD EVENTS:');
+      dinnerEvents.forEach(event => {
+        prompt.push(
+          `- ${event.name} at ${event.time}`,
+          `  → Expected ${event.postEventWindow.expectedOrders} orders post-event`,
+          `  → Need ${event.postEventWindow.staffingNeeded} extra drivers`
+        );
+      });
+    }
+    
+    // Boost week prep
+    if (data.boostWeek?.isHighProbabilityPeriod) {
+      prompt.push('', 'BOOST WEEK PREP:');
+      prompt.push('- Ensure full topping levels');
+      prompt.push('- Verify all drivers scheduled');
+      prompt.push('- Prep team for high volume');
+    }
+    
+    // Pre-order opportunities
+    const futureEvents = (data.events || []).filter(e => 
+      e.preOrderOpportunity?.isActive
+    );
+    
+    if (futureEvents.length > 0) {
+      prompt.push('', 'PRE-ORDER CAMPAIGNS:');
+      futureEvents.slice(0, 2).forEach(event => {
+        prompt.push(`- ${event.name}: Launch campaign now for ${event.daysUntilEvent} days out`);
+      });
+    }
+    
     return prompt.join('\n');
   }
   
@@ -1673,7 +1749,6 @@ return {
   }
   
   buildLateNightPrompt(store, data, context) {
-    // Late night and closing focus
     const timeStr = this.formatTimeForPrompt(context);
     
     const prompt = [
@@ -1683,31 +1758,42 @@ return {
       'CLOSING CONSIDERATIONS:'
     ];
     
-    // ... rest of late-night-specific prompt building
+    // Late night events still affecting business
+    const lateEvents = (data.events || []).filter(e => 
+      e.isPastToday && e.hoursUntilEvent >= -2
+    );
+    
+    if (lateEvents.length > 0) {
+      prompt.push('- Post-event orders still coming from:');
+      lateEvents.forEach(event => {
+        prompt.push(`  → ${event.name} (ended ${Math.abs(Math.round(event.hoursUntilEvent))} hours ago)`);
+      });
+    }
+    
+    // Tomorrow prep
+    const tomorrowEvents = (data.events || []).filter(e => 
+      e.daysUntilEvent === 1
+    );
+    
+    if (tomorrowEvents.length > 0) {
+      prompt.push('', 'TOMORROW\'S EVENTS:');
+      tomorrowEvents.forEach(event => {
+        prompt.push(`- ${event.name} at ${event.time} - prep notes for opener`);
+      });
+    }
+    
+    // Weather for tomorrow's opening
+    if (data.weather?.condition) {
+      prompt.push('', 'TOMORROW\'S CONDITIONS:');
+      prompt.push(`- Weather: ${data.weather.condition}`);
+    }
+    
     return prompt.join('\n');
   }
   
   buildStandardPrompt(store, data, context) {
-    // This is your existing buildCleanPrompt logic
-    // Keep it for evening rush when the current logic works best
     const factors = this.identifyKeyFactors(data, context);
-    // ... rest of existing prompt building logic
-  }
-  
-  formatTimeForPrompt(context) {
-    const hours = context.hour;
-    const minutes = context.minutes || 0;
-    const isPM = hours >= 12;
-    const displayHours = hours === 0 ? 12 : hours > 12 ? hours - 12 : hours;
-    return `${displayHours}:${minutes.toString().padStart(2, '0')} ${isPM ? 'PM' : 'AM'}`;
-  }
-    
-    // Format current time
-    const hours = context.localTime.getHours();
-    const minutes = context.localTime.getMinutes();
-    const isPM = hours >= 12;
-    const displayHours = hours === 0 ? 12 : hours > 12 ? hours - 12 : hours;
-    const timeStr = `${displayHours}:${minutes.toString().padStart(2, '0')} ${isPM ? 'PM' : 'AM'}`;
+    const timeStr = this.formatTimeForPrompt(context);
     
     const prompt = [
       `Store #${store.id} in ${store.city}, ${store.state}`,
@@ -1734,12 +1820,6 @@ return {
       
       if (todayEvents.length > 0) {
         prompt.push('', 'TODAY\'S EVENTS:');
-        console.log(`📅 Today's events for prompt:`, todayEvents.map(e => ({
-          name: e.name,
-          venue: e.venue,
-          time: e.time,
-          hoursUntil: e.hoursUntilEvent
-        })));
         todayEvents.forEach(event => {
           if (event.hoursUntilEvent > 0) {
             prompt.push(
@@ -1796,6 +1876,14 @@ return {
     }
     
     return prompt.join('\n');
+  }
+  
+  formatTimeForPrompt(context) {
+    const hours = context.hour;
+    const minutes = context.minutes || 0;
+    const isPM = hours >= 12;
+    const displayHours = hours === 0 ? 12 : hours > 12 ? hours - 12 : hours;
+    return `${displayHours}:${minutes.toString().padStart(2, '0')} ${isPM ? 'PM' : 'AM'}`;
   }
 
   identifyKeyFactors(data, context) {
