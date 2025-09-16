@@ -268,12 +268,8 @@ const response = await axios.get('https://app.ticketmaster.com/discovery/v2/even
         const eventDate = new Date(event.dates.start.dateTime);
 
         // Debug logging
-        console.log(`Event ${event.name} time:`, {
-          raw: event.dates.start.dateTime,
-          parsed: eventDate.toISOString(),
-          local: eventDate.toLocaleString()
-        });
-        console.log(`  - ${event.name} | ${eventDate.toLocaleDateString()} | Venue: ${event._embedded?.venues?.[0]?.name}`);
+        // Only log essential info
+      console.log(`  - ${event.name} | ${eventDate.toLocaleDateString()} | Venue: ${event._embedded?.venues?.[0]?.name || 'Unknown'}`);
       });
 
       const processedEvents = response.data._embedded.events
@@ -301,13 +297,8 @@ const response = await axios.get('https://app.ticketmaster.com/discovery/v2/even
       });
 
       // Debug event times
-        events.forEach(event => {
-          console.log(`Event: ${event.name} at ${event.venue}`);
-          console.log(`  - Time string: ${event.time}`);
-          console.log(`  - Hours until: ${event.hoursUntilEvent.toFixed(1)}`);
-          console.log(`  - Is today: ${event.isToday}`);
-          console.log(`  - Date: ${event.date}`);
-        });
+        // Summary log only
+        console.log(`${logPrefix} ✅ Filtered to ${events.length} relevant events for today and upcoming`);
 
       this.setCache(cacheKey, events);
       return events;
@@ -329,7 +320,8 @@ const response = await axios.get('https://app.ticketmaster.com/discovery/v2/even
     const cached = this.getCached(cacheKey, 3600000); // 1 hour cache
     if (cached) return cached;
 
-    console.log(`🎪 Fetching events from multiple sources for store ${store.id}...`);
+    const logPrefix = `[Store ${store.id}]`;
+console.log(`\n${logPrefix} 🎪 Fetching events from multiple sources...`);
 
     // Fetch from all sources in parallel
     const [ticketmaster, seatgeek, eventbrite, googlePlaces] = await Promise.allSettled([
@@ -347,12 +339,14 @@ const response = await axios.get('https://app.ticketmaster.com/discovery/v2/even
       ...(googlePlaces.status === 'fulfilled' ? googlePlaces.value : [])
     ];
 
-    console.log(`📊 Event sources summary:
-      - Ticketmaster: ${ticketmaster.status === 'fulfilled' ? ticketmaster.value.length : 'failed'}
-      - SeatGeek: ${seatgeek.status === 'fulfilled' ? seatgeek.value.length : 'failed'}
-      - Eventbrite: ${eventbrite.status === 'fulfilled' ? eventbrite.value.length : 'failed'}
-      - Google Places: ${googlePlaces.status === 'fulfilled' ? googlePlaces.value.length : 'failed'}
-      - Total: ${allEvents.length} events found`);
+    const sources = {
+      Ticketmaster: ticketmaster.status === 'fulfilled' ? ticketmaster.value.length : 0,
+      SeatGeek: seatgeek.status === 'fulfilled' ? seatgeek.value.length : 0,
+      Eventbrite: eventbrite.status === 'fulfilled' ? eventbrite.value.length : 0,
+      GooglePlaces: googlePlaces.status === 'fulfilled' ? googlePlaces.value.length : 0
+    };
+    
+    console.log(`${logPrefix} 📊 Events found:`, sources, `(Total: ${allEvents.length})`);
 
     // Deduplicate events
     const uniqueEvents = this.deduplicateEvents(allEvents);
@@ -586,10 +580,14 @@ const isToday = eventStoreMs >= storeTodayStartMs && eventStoreMs < (storeTodayS
             }
           };
         });
-    } catch (error) {
-      console.error('Eventbrite API error:', error.response?.status, error.response?.data?.error_description || error.message);
-      return [];
-    }
+      } catch (error) {
+        if (error.response?.status === 401) {
+          console.log('Eventbrite authentication invalid - skipping');
+        } else {
+          console.error('Eventbrite API error:', error.message);
+        }
+        return [];
+      }
   }
 
   async getGooglePlacesEvents(store) {
@@ -677,12 +675,6 @@ const nowUTC = new Date();
 // Calculate hours until event directly
 const hoursUntilEvent = (eventDateUTC - nowUTC) / (1000 * 60 * 60);
 const daysUntilEvent = Math.floor(hoursUntilEvent / 24);
-
-console.log(`⏰ Event timing for ${event.name}:`, {
-  eventUTC: eventDateUTC.toISOString(),
-  currentUTC: nowUTC.toISOString(),
-  hoursUntil: hoursUntilEvent.toFixed(1)
-});
 
 // For "today" check, use store's timezone from database
 const offsetMinutes = this.parseTimezoneOffset(store.timezone);
@@ -2162,6 +2154,12 @@ if (event.date.getDay() >= 1 && event.date.getDay() <= 4) {
       return this.validateStandardResponse(response); // Evening/late night use standard
     }
   }
+
+  cleanInsightText(text) {
+    // Remove any duplicate spaces and trim
+    return text.replace(/\s+/g, ' ').trim();
+  }
+
   
   validateMorningResponse(response) {
     return {
