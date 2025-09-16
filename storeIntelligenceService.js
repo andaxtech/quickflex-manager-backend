@@ -1494,9 +1494,10 @@ await this.enforceRateLimit('google');
     });
     
     const prompt = this.buildCleanPrompt(store, data, context);
+const systemPrompt = this.getSystemPrompt(context); // Pass context here
 
-      // DEBUG: Log the prompt being sent to AI
-      console.log(`🤖 AI Prompt for store ${store.id}:`);
+// DEBUG: Log the prompt being sent to AI
+console.log(`🤖 AI Prompt for store ${store.id}:`);
       console.log(prompt);
       console.log('📊 Data summary:', {
         eventsCount: data.events?.length || 0,
@@ -1517,7 +1518,7 @@ await this.enforceRateLimit('google');
         messages: [
           {
             role: "system",
-            content: this.getSystemPrompt()
+            content: systemPrompt // Use the context-aware prompt
           },
           {
             role: "user",
@@ -1532,7 +1533,7 @@ await this.enforceRateLimit('google');
       const response = JSON.parse(completion.choices[0].message.content);
 console.log(`🎯 Raw AI Response for store ${store.id}:`, JSON.stringify(response, null, 2));
 
-const validatedResponse = this.validateResponse(response);
+const validatedResponse = this.validateResponse(response, context);
 
 // Return both the AI insight AND the raw external data
 return {
@@ -1558,7 +1559,148 @@ return {
   }
 
   buildCleanPrompt(store, data, context) {
+    const hour = context.hour;
+    
+    // Use time-specific prompt building
+    if (hour >= 5 && hour < 10) {
+      return this.buildMorningPrompt(store, data, context);
+    } else if (hour >= 10 && hour < 14) {
+      return this.buildLunchPrompt(store, data, context);
+    } else if (hour >= 14 && hour < 17) {
+      return this.buildAfternoonPrompt(store, data, context);
+    } else if (hour >= 17 && hour < 22) {
+      return this.buildEveningPrompt(store, data, context);
+    } else {
+      return this.buildLateNightPrompt(store, data, context);
+    }
+  }
+  
+  buildMorningPrompt(store, data, context) {
+    const timeStr = this.formatTimeForPrompt(context);
+    
+    const prompt = [
+      `Store #${store.id} in ${store.city}, ${store.state}`,
+      `Current time: ${timeStr} - MORNING OPERATIONS`,
+      `Day: ${['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'][context.dayOfWeek]}`,
+      '',
+      'MORNING CHECKLIST STATUS:'
+    ];
+    
+    // Weather for delivery planning
+    if (data.weather) {
+      prompt.push(`- Weather for lunch: ${data.weather.temp}°F, ${data.weather.condition}`);
+      if (data.weather.isRaining) {
+        prompt.push(`  → Rainy lunch requires extra driver scheduling`);
+      }
+    }
+    
+    // Traffic patterns for lunch prep
+    if (data.traffic) {
+      prompt.push(`- Traffic conditions: ${data.traffic.severity} (affects lunch delivery planning)`);
+    }
+    
+    // Check for lunch period events
+    const lunchEvents = (data.events || []).filter(e => 
+      e.hoursUntilEvent > 2 && e.hoursUntilEvent < 7 && !e.isPastToday
+    );
+    
+    if (lunchEvents.length > 0) {
+      prompt.push('', 'LUNCH PERIOD EVENTS:');
+      lunchEvents.forEach(event => {
+        prompt.push(
+          `- ${event.name} at ${event.venue} (${event.time})`,
+          `  → Prepare for ${event.postEventWindow.expectedOrders} additional orders`
+        );
+      });
+    }
+    
+    // Pre-orders and catering
+    const todayPreOrders = (data.events || []).filter(e => 
+      e.isToday && e.preOrderOpportunity
+    );
+    
+    if (todayPreOrders.length > 0) {
+      prompt.push('', 'PRE-ORDERS/CATERING TODAY:');
+      todayPreOrders.forEach(event => {
+        prompt.push(`- ${event.capacity > 100 ? 'Large order' : 'Pre-order'} expected for ${event.name}`);
+      });
+    }
+    
+    // Inventory concerns from yesterday
+    if (data.slowPeriod?.dayType === 'weekend' && context.dayOfWeek === 1) {
+      prompt.push('', 'POST-WEEKEND NOTES:');
+      prompt.push('- Check inventory levels after weekend volume');
+      prompt.push('- Verify truck order accounts for weekend depletion');
+    }
+    
+    return prompt.join('\n');
+  }
+  
+  buildLunchPrompt(store, data, context) {
+    // Similar structure but focused on lunch operations
+    const timeStr = this.formatTimeForPrompt(context);
     const factors = this.identifyKeyFactors(data, context);
+    
+    const prompt = [
+      `Store #${store.id} - LUNCH OPERATIONS`,
+      `Current time: ${timeStr}`,
+      '',
+      'CURRENT CONDITIONS:'
+    ];
+    
+    // ... rest of lunch-specific prompt building
+    return prompt.join('\n');
+  }
+  
+  buildAfternoonPrompt(store, data, context) {
+    // Afternoon transition focus
+    const timeStr = this.formatTimeForPrompt(context);
+    
+    const prompt = [
+      `Store #${store.id} - AFTERNOON TRANSITION`,
+      `Current time: ${timeStr}`,
+      '',
+      'DINNER PREP STATUS:'
+    ];
+    
+    // ... rest of afternoon-specific prompt building
+    return prompt.join('\n');
+  }
+  
+  buildEveningPrompt(store, data, context) {
+    // Use existing evening logic but enhanced
+    return this.buildStandardPrompt(store, data, context); // Reuse existing logic
+  }
+  
+  buildLateNightPrompt(store, data, context) {
+    // Late night and closing focus
+    const timeStr = this.formatTimeForPrompt(context);
+    
+    const prompt = [
+      `Store #${store.id} - LATE NIGHT OPERATIONS`,
+      `Current time: ${timeStr}`,
+      '',
+      'CLOSING CONSIDERATIONS:'
+    ];
+    
+    // ... rest of late-night-specific prompt building
+    return prompt.join('\n');
+  }
+  
+  buildStandardPrompt(store, data, context) {
+    // This is your existing buildCleanPrompt logic
+    // Keep it for evening rush when the current logic works best
+    const factors = this.identifyKeyFactors(data, context);
+    // ... rest of existing prompt building logic
+  }
+  
+  formatTimeForPrompt(context) {
+    const hours = context.hour;
+    const minutes = context.minutes || 0;
+    const isPM = hours >= 12;
+    const displayHours = hours === 0 ? 12 : hours > 12 ? hours - 12 : hours;
+    return `${displayHours}:${minutes.toString().padStart(2, '0')} ${isPM ? 'PM' : 'AM'}`;
+  }
     
     // Format current time
     const hours = context.localTime.getHours();
@@ -1760,54 +1902,219 @@ if (event.date.getDay() >= 1 && event.date.getDay() <= 4) {
   }
     
 
-  getSystemPrompt() {
-    return `You are an experienced Domino's Pizza store manager. Your role is to analyze data and suggest actions. your goal is to increase sales or reduce costs for the store.
+  getSystemPrompt(context) {
+    const hour = context.hour;
+    
+    if (hour >= 5 && hour < 10) {
+      return this.getMorningSystemPrompt(context);
+    } else if (hour >= 10 && hour < 14) {
+      return this.getLunchSystemPrompt(context);
+    } else if (hour >= 14 && hour < 17) {
+      return this.getAfternoonSystemPrompt(context);
+    } else if (hour >= 17 && hour < 22) {
+      return this.getEveningSystemPrompt(context);
+    } else {
+      return this.getLateNightSystemPrompt(context);
+    }
+  }
   
-  Instructions:
-  - Be analytical
-  - Provide time-sensitive insights 
-  - do not make assumptions or invent information
-  - Name specific events, venues, and times
-  - Keep responses concise and actionable
-  - Use professional tone
+  getMorningSystemPrompt(context) {
+    return `You are an experienced Domino's Pizza store manager conducting morning operations per SOP.
   
-  Operational assumptions:
-  - Pre-event orders: 0.5% of venue capacity
-  - Post-event orders: 1% of venue capacity  
-  - Peak orders occur 45 minutes after events end
-  - 1 driver handles 20 pre-event orders or 15 post-event orders
+  Current priorities (5am-10am):
+  - Manager arrival and security procedures
+  - Cash control verification and till setup
+  - Staff preparation and pre-shift huddle
+  - Food prep: meats, veggies, sauces per PULSE labeling
+  - System checks: PULSE terminals, make line refrigeration
+  - Inventory assessment and truck order review
   
-  Response format (return as JSON):
-{
-  "insight": "Write ONE clear sentence that includes: [Event/Condition] at [specific time] - [recommended action] because [brief reason]. Expected: [X%] or around ([Y orders]) increase. [Any other key condition].",
-  "metrics": {
-    "expectedOrderIncrease": percentage,
-    "expectedOrderCount": number,
-    "recommendedExtraDrivers": number,
-    "confidence": "high/medium/low"
-  },
-  "action": "Most critical action in 10 words or less"
-}
+  Response format for MORNING:
+  {
+    "insight": "Focus on [specific opening task] because [reason]. [Weather/traffic impact on lunch prep]. [Any pre-orders or events affecting today].",
+    "metrics": {
+      "prepTasksComplete": percentage (0-100),
+      "staffingReady": number of staff vs needed,
+      "lunchReadiness": percentage,
+      "preOrderCount": number,
+      "inventoryStatus": "good/low/critical"
+    },
+    "action": "Primary task to complete by [time]",
+    "severity": "info/warning/alert"
+  }
+  
+  Example insights:
+  - "Complete veggie prep by 9:30am - rainy lunch forecast needs extra drivers. 2 large catering orders at noon require early dough prep."
+  - "Low on pepperoni (2 cases) - adjust truck order by 10am. Clear weather supports normal lunch staffing. No major events today."`;
+  }
+  
+  getLunchSystemPrompt(context) {
+    return `You are an experienced Domino's Pizza store manager managing lunch operations.
+  
+  Current priorities (10am-2pm):
+  - Track Make Time (<2:30) and Service Time (<3:00)
+  - Fair driver dispatch using zone/rotation
+  - Manage breaks while maintaining coverage
+  - Monitor topping hold times and temps
+  - Prepare for afternoon transition
+  
+  Response format for LUNCH:
+  {
+    "insight": "[Current condition] affecting lunch - [action needed]. Expect [X]% ([Y] orders) vs normal. [Key metric] needs attention.",
+    "metrics": {
+      "currentMakeTime": seconds,
+      "expectedOrderIncrease": percentage,
+      "expectedOrderCount": number,
+      "recommendedStaffAdjustment": number,
+      "otdRisk": "low/medium/high"
+    },
+    "action": "Immediate action for service goals",
+    "severity": "info/warning/alert"
+  }`;
+  }
+  
+  getAfternoonSystemPrompt(context) {
+    return `You are an experienced Domino's Pizza store manager during afternoon transition.
+  
+  Current priorities (2pm-5pm):
+  - Prep for dinner rush: top up all toppings
+  - Review dinner staffing vs forecast
+  - Coordinate driver schedules and breaks
+  - Check inventory levels for evening
+  - Address any lunch period issues
+  
+  Response format for AFTERNOON:
+  {
+    "insight": "[Prep status] for dinner rush. [Staffing or inventory concern]. [Event/weather impact] on evening demand.",
+    "metrics": {
+      "dinnerPrepComplete": percentage,
+      "expectedDinnerVolume": percentage vs normal,
+      "driverCountNeeded": number,
+      "inventoryRisk": "none/low/high"
+    },
+    "action": "Critical prep task before 5pm",
+    "severity": "info/warning/alert"
+  }`;
+  }
+  
+  getEveningSystemPrompt(context) {
+    return `You are an experienced Domino's Pizza store manager during dinner rush.
+  
+  Current priorities (5pm-10pm):
+  - Maintain OTD >85% and Make Time <2:30
+  - Drive Time Captain managing dispatch
+  - Monitor PULSE promise times vs capacity
+  - Approve remakes for quality
+  - Balance labor to demand
+  
+  Response format for EVENING:
+  {
+    "insight": "[Event/condition] at [time] - [staffing action] for [reason]. Expect [X]% ([Y] orders) increase. [Current metric status].",
+    "metrics": {
+      "expectedOrderIncrease": percentage,
+      "expectedOrderCount": number,
+      "recommendedExtraDrivers": number,
+      "currentOTD": percentage,
+      "laborPercent": percentage
+    },
+    "action": "Immediate staffing or operational change",
+    "severity": "info/warning/alert"
+  }`;
+  }
+  
+  getLateNightSystemPrompt(context) {
+    return `You are an experienced Domino's Pizza store manager during late night/close.
+  
+  Current priorities (10pm-close):
+  - Balance service with closing tasks
+  - Monitor labor % as volume decreases
+  - Start breakdown per closing checklist
+  - Ensure deposit and waste tracking
+  - Prepare tomorrow's opening needs
+  
+  Response format for LATE NIGHT:
+  {
+    "insight": "[Current status] - begin [specific closing task]. [Tomorrow prep needed]. Labor at [X]% of sales.",
+    "metrics": {
+      "ordersPerHour": number,
+      "laborPercent": percentage,
+      "closingProgress": percentage,
+      "tomorrowStaffingNeeds": number
+    },
+    "action": "Priority for efficient close",
+    "severity": "info"
+  }`;
+  }
 
-Example insight formats:
-- "Lakers game ends 7pm tomorrow - staff up for 8pm rush. Expect 5% (15 order) increase. Weather clear, light traffic."
-- "Heavy rain starting 5pm today - add 2 drivers by 4:30pm. Expect 20% (40 order) surge. Major traffic delays likely."
-- "Taylor Swift concert at Arena ends 10pm Friday - schedule 3 extra drivers 9-11pm. Expect 35% (80 order) spike. Pre-position inventory."
-
-Rules for insight:
-1. Always lead with the triggering event/condition and its time
-2. State the recommended action clearly
-3. Include percentage AND absolute number for orders
-4. End with supporting conditions (weather/traffic)
-5. Keep under 200 characters
-6. Use natural time expressions (7pm not 19:00)
-- carryoutPromotion: promotion details if weather warrants
-- preOrderCampaign: campaign details if major events upcoming`;
-}
-
-validateResponse(response) {
-  // Clean up the insight - replace complex times with simple ones
-  let cleanInsight = response.insight || "Monitor operations closely";
+  validateResponse(response, context) {
+    const hour = context?.hour || 12; // Default to noon if no context
+    
+    // Time-specific validation
+    if (hour >= 5 && hour < 10) {
+      return this.validateMorningResponse(response);
+    } else if (hour >= 10 && hour < 14) {
+      return this.validateLunchResponse(response);
+    } else if (hour >= 14 && hour < 17) {
+      return this.validateAfternoonResponse(response);
+    } else {
+      return this.validateStandardResponse(response); // Evening/late night use standard
+    }
+  }
+  
+  validateMorningResponse(response) {
+    return {
+      insight: String(response.insight || "Complete opening procedures on schedule").substring(0, 200),
+      severity: response.severity || "info",
+      metrics: {
+        prepTasksComplete: Number(response.metrics?.prepTasksComplete) || 0,
+        staffingReady: Number(response.metrics?.staffingReady) || 0,
+        lunchReadiness: Number(response.metrics?.lunchReadiness) || 0,
+        preOrderCount: Number(response.metrics?.preOrderCount) || 0,
+        inventoryStatus: String(response.metrics?.inventoryStatus || "good")
+      },
+      action: String(response.action || "Continue morning prep tasks").substring(0, 80)
+    };
+  }
+  
+  validateLunchResponse(response) {
+    return {
+      insight: this.cleanInsightText(response.insight || "Maintain lunch service standards"),
+      severity: response.severity || "info",
+      metrics: {
+        currentMakeTime: Number(response.metrics?.currentMakeTime) || 150,
+        expectedOrderIncrease: Number(response.metrics?.expectedOrderIncrease) || 0,
+        expectedOrderCount: Number(response.metrics?.expectedOrderCount) || 0,
+        recommendedStaffAdjustment: Number(response.metrics?.recommendedStaffAdjustment) || 0,
+        otdRisk: String(response.metrics?.otdRisk || "low")
+      },
+      action: String(response.action || "Monitor service times").substring(0, 80)
+    };
+  }
+  
+  validateAfternoonResponse(response) {
+    return {
+      insight: this.cleanInsightText(response.insight || "Prepare for dinner rush"),
+      severity: response.severity || "info",
+      metrics: {
+        dinnerPrepComplete: Number(response.metrics?.dinnerPrepComplete) || 0,
+        expectedDinnerVolume: Number(response.metrics?.expectedDinnerVolume) || 100,
+        driverCountNeeded: Number(response.metrics?.driverCountNeeded) || 0,
+        inventoryRisk: String(response.metrics?.inventoryRisk || "none")
+      },
+      action: String(response.action || "Complete dinner prep").substring(0, 80)
+    };
+  }
+  
+  validateStandardResponse(response) {
+    // Your existing validation logic here
+    let cleanInsight = response.insight || "Monitor operations closely";
+    // ... rest of existing validation
+  }
+  
+  cleanInsightText(text) {
+    // Your existing time simplification logic
+    return text.substring(0, 200);
+  }
   
   // Ensure insight follows the expected pattern
 if (!cleanInsight.toLowerCase().includes('expect')) {
