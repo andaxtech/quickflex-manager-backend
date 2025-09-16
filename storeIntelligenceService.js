@@ -221,12 +221,15 @@ calculateCarryoutOpportunity(trigger, data) {
       // Rate limit protection for Ticketmaster API
       await this.enforceRateLimit('ticketmaster');
   
-      // Get store's current local time
-const storeNowLocal = this.getStoreCurrentDate(store);
+      const nowUTC = new Date();
+const offsetMinutes = this.parseTimezoneOffset(store.timezone);
+const storeNowMs = nowUTC.getTime() + (offsetMinutes * 60 * 1000);
 
-// Calculate start of today in store's timezone
-const storeTodayStart = new Date(storeNowLocal);
-storeTodayStart.setHours(0, 0, 0, 0);
+// Calculate midnight today in store timezone
+const totalMinutes = Math.floor(storeNowMs / 60000);
+const dayMinutes = ((totalMinutes % (24 * 60)) + (24 * 60)) % (24 * 60);
+const storeTodayStartMs = storeNowMs - (dayMinutes * 60000);
+const storeTodayStart = new Date(storeTodayStartMs);
 
 // Calculate 7 days from now in store's timezone
 const storeWeekEnd = new Date(storeTodayStart);
@@ -424,14 +427,16 @@ const response = await axios.get('https://app.ticketmaster.com/discovery/v2/even
           const todayStartUTC = new Date(storeToday.getTime() - (offsetMinutes * 60 * 1000));
           const tomorrowStartUTC = new Date(todayStartUTC.getTime() + (24 * 60 * 60 * 1000));
 
-          const isToday = eventDateUTC >= todayStartUTC && eventDateUTC < tomorrowStartUTC;
+          // Calculate if event is today in store timezone
+          const eventStoreMs = eventDateUTC.getTime() + (offsetMinutes * 60 * 1000);
+          const isToday = eventStoreMs >= storeTodayStartMs && eventStoreMs < (storeTodayStartMs + 24 * 60 * 60 * 1000);
           const isPastToday = isToday && hoursUntilEvent < 0;
 
-          // Format time in store timezone
-          const eventStoreMs = eventDateUTC.getTime() + (offsetMinutes * 60 * 1000);
-          const eventStoreDate = new Date(eventStoreMs);
-          const hours = eventStoreDate.getHours();
-          const minutes = eventStoreDate.getMinutes();
+          // Format time in store's timezone (reuse eventStoreMs from above)
+          const totalMinutesForTime = Math.floor(eventStoreMs / 60000);
+          const dayMinutesForTime = ((totalMinutesForTime % (24 * 60)) + (24 * 60)) % (24 * 60);
+          const hours = Math.floor(dayMinutesForTime / 60);
+          const minutes = dayMinutesForTime % 60;
           const isPM = hours >= 12;
           const displayHours = hours === 0 ? 12 : hours > 12 ? hours - 12 : hours;
           const timeStr = `${displayHours}:${minutes.toString().padStart(2, '0')} ${isPM ? 'PM' : 'AM'}`;
@@ -648,13 +653,11 @@ const response = await axios.get('https://app.ticketmaster.com/discovery/v2/even
     // Parse event date as UTC
       const eventDateUTC = new Date(event.dates.start.dateTime);
 
-      // Get current UTC time properly
-      const nowUTC = new Date();
-      const deviceOffset = nowUTC.getTimezoneOffset() * 60 * 1000;
-      const actualUTC = new Date(nowUTC.getTime() + deviceOffset);
+      // Get current UTC time (Date() already returns UTC internally)
+const nowUTC = new Date();
 
-      // Calculate hours until event using proper UTC comparison
-      const hoursUntilEvent = (eventDateUTC - actualUTC) / (1000 * 60 * 60);
+// Calculate hours until event directly
+const hoursUntilEvent = (eventDateUTC - nowUTC) / (1000 * 60 * 60);
       const daysUntilEvent = Math.floor(hoursUntilEvent / 24);
 
       console.log(`⏰ Event timing for ${event.name}:`, {
@@ -663,26 +666,36 @@ const response = await axios.get('https://app.ticketmaster.com/discovery/v2/even
         hoursUntil: hoursUntilEvent.toFixed(1)
       });
     
-    // For "today" check, we need to compare dates in store's timezone
-    const offsetMinutes = this.parseTimezoneOffset(store.timezone);
-    
-    // Get "today" boundaries in store timezone
-    const nowMs = nowUTC.getTime();
-    const storeNowMs = nowMs + (offsetMinutes * 60 * 1000);
-    const storeToday = new Date(storeNowMs);
-    storeToday.setHours(0, 0, 0, 0);
-    // Convert back to UTC for comparison
-    const todayStartUTC = new Date(storeToday.getTime() - (offsetMinutes * 60 * 1000));
-    const tomorrowStartUTC = new Date(todayStartUTC.getTime() + (24 * 60 * 60 * 1000));
-    
-    const isToday = eventDateUTC >= todayStartUTC && eventDateUTC < tomorrowStartUTC;
-    const isPastToday = isToday && hoursUntilEvent < 0;
+    // For "today" check, use store's timezone from database
+      const offsetMinutes = this.parseTimezoneOffset(store.timezone);
+
+      /// Get current UTC time
+const nowUTC = new Date();
+
+// Convert to store local time for "today" calculation
+const storeNowMs = nowUTC.getTime() + (offsetMinutes * 60 * 1000);
+
+// Calculate midnight today in store timezone
+const totalMinutes = Math.floor(storeNowMs / 60000);
+const dayMinutes = ((totalMinutes % (24 * 60)) + (24 * 60)) % (24 * 60);
+const todayStartStoreMs = storeNowMs - (dayMinutes * 60000);
+const tomorrowStartStoreMs = todayStartStoreMs + (24 * 60 * 60 * 1000);
+
+// Convert event UTC to store local time
+const eventStoreMs = eventDateUTC.getTime() + (offsetMinutes * 60 * 1000);
+
+// Check if event is today in store's timezone
+const isToday = eventStoreMs >= todayStartStoreMs && eventStoreMs < tomorrowStartStoreMs;
+      const isPastToday = isToday && hoursUntilEvent < 0;
     
     // Format time in store's timezone
     const eventStoreMs = eventDateUTC.getTime() + (offsetMinutes * 60 * 1000);
-    const eventStoreDate = new Date(eventStoreMs);
-    const hours = eventStoreDate.getHours();
-    const minutes = eventStoreDate.getMinutes();
+
+      // Extract time components manually to avoid timezone issues
+      const totalMinutes = Math.floor(eventStoreMs / 60000);
+      const dayMinutes = ((totalMinutes % (24 * 60)) + (24 * 60)) % (24 * 60);
+      const hours = Math.floor(dayMinutes / 60);
+const minutes = dayMinutes % 60;
     const isPM = hours >= 12;
     const displayHours = hours === 0 ? 12 : hours > 12 ? hours - 12 : hours;
     const timeStr = `${displayHours}:${minutes.toString().padStart(2, '0')} ${isPM ? 'PM' : 'AM'}`;
@@ -819,11 +832,11 @@ const response = await axios.get('https://app.ticketmaster.com/discovery/v2/even
     
     // Get current time in store's timezone
     const localTime = this.getStoreLocalTime(store);
-    
+
     return {
       type: storeType.type,
-      localTime,
-      hour: localTime.getHours(),
+      localTime: localTime.date,
+      hour: localTime.hours,
       dayOfWeek: localTime.getDay(),
       isWeekend: localTime.getDay() === 0 || localTime.getDay() === 6,
       isPeakTime: this.isPeakHour(localTime.getHours()),
@@ -1101,8 +1114,8 @@ await this.enforceRateLimit('google');
 //find slow periods
   async analyzeSlowPeriod(store) {
     const context = this.getStoreLocalTime(store);
-    const hour = context.getHours();
-    const dayOfWeek = context.getDay();
+    const hour = context.hours;
+    const dayOfWeek = context.dayOfWeek;
     const dayName = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'][dayOfWeek];
     
     // Define slow period patterns
@@ -1329,6 +1342,29 @@ await this.enforceRateLimit('google');
     return { type: 'suburban', subType: 'standard' };
   }
 
+
+  getStoreLocalTime(store) {
+    const offsetMinutes = this.parseTimezoneOffset(store.timezone);
+    const now = new Date();
+    const localMs = now.getTime() + (offsetMinutes * 60 * 1000);
+    
+    // Return an object with both the date and extracted components
+    const totalMinutes = Math.floor(localMs / 60000);
+    const dayMinutes = ((totalMinutes % (24 * 60)) + (24 * 60)) % (24 * 60);
+    const hours = Math.floor(dayMinutes / 60);
+    const minutes = dayMinutes % 60;
+    
+    return {
+      date: new Date(localMs),
+      ms: localMs,
+      hours: hours,
+      minutes: minutes,
+      getHours: () => hours,
+      getMinutes: () => minutes,
+      getDay: () => new Date(localMs).getDay()
+    };
+  }
+
   calculateDistance(lat1, lon1, lat2, lon2) {
     const R = 3959; // Earth radius in miles
     const dLat = (lat2 - lat1) * Math.PI / 180;
@@ -1359,25 +1395,6 @@ await this.enforceRateLimit('google');
     }
   }
 
-  getStoreLocalTime(store) {
-    const now = new Date();
-    const offsetMinutes = this.parseTimezoneOffset(store.timezone);
-    
-    // Get UTC time first (getTimezoneOffset returns negative for west of UTC)
-const utcMs = now.getTime() - (now.getTimezoneOffset() * 60 * 1000);
-    
-    // Then add store's offset
-    const storeLocalTimeMs = utcMs + (offsetMinutes * 60 * 1000);
-    
-    console.log(`⏰ Time calculation for store ${store.id}:`, {
-      deviceTime: now.toLocaleString(),
-      utcTime: new Date(utcMs).toISOString(),
-      storeOffset: offsetMinutes,
-      storeLocalTime: new Date(storeLocalTimeMs).toLocaleString()
-    });
-    
-    return new Date(storeLocalTimeMs);
-  }
 
   getStoreLocalDate(utcDate, store) {
     const offsetMinutes = this.parseTimezoneOffset(store.timezone);
