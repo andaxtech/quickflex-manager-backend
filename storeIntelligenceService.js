@@ -54,8 +54,8 @@ class StoreIntelligenceService {
       id: store.store_id || store.id,
       city: store.city,
       state: store.state || store.region,
-      lat: parseFloat(store.store_latitude),
-      lng: parseFloat(store.store_longitude),
+      lat: parseFloat(store.store_latitude || store.lat),
+      lng: parseFloat(store.store_longitude || store.lng),
       timezone: store.timeZoneCode || store.time_zone_code || 'GMT-07:00',
       isOnline: store.is_online_now && !store.is_force_offline,
       cashLimit: store.cash_limit,
@@ -71,7 +71,7 @@ class StoreIntelligenceService {
   }
 
   async collectExternalData(store) {
-    console.log(`📊 Collecting external data for store ${store.id}...`);
+    console.log(`\n📊 Collecting external data for store ${store.id}...`);
     
     const [weather, traffic, events, boostWeek, slowPeriod] = await Promise.allSettled([
       this.getWeatherData(store),
@@ -248,8 +248,8 @@ const response = await axios.get('https://app.ticketmaster.com/discovery/v2/even
     unit: 'miles',
     size: 20,  // Increased from 10
     sort: 'date,asc',
-    startDateTime: startDateTimeUTC.toISOString(),
-    endDateTime: endDateTimeUTC.toISOString()
+    startDateTime: startDateTimeUTC.toISOString().split('.')[0] + 'Z',
+    endDateTime: endDateTimeUTC.toISOString().split('.')[0] + 'Z'
   },
   timeout: 5000
 });
@@ -482,6 +482,12 @@ const isToday = eventStoreMs >= storeTodayStartMs && eventStoreMs < (storeTodayS
 
   async getEventbriteEvents(store) {
     try {
+      // Skip if no Eventbrite credentials
+      if (!process.env.EVENTBRITE_API_KEY && !process.env.EVENTBRITE_TOKEN && !process.env.EVENTBRITE_PUBLIC_TOKEN) {
+        console.log('Eventbrite credentials not configured - skipping');
+        return [];
+      }
+      
       const ebPublicToken = process.env.EVENTBRITE_PUBLIC_TOKEN || process.env.EVENTBRITE_TOKEN;
       const ebApiKey = process.env.EVENTBRITE_API_KEY;
       
@@ -490,9 +496,16 @@ const isToday = eventStoreMs >= storeTodayStartMs && eventStoreMs < (storeTodayS
         return [];
       }
   
-      const authHeader = ebPublicToken 
-        ? `Bearer ${ebPublicToken}`
-        : `Bearer ${ebApiKey}`;
+      const authHeader = ebApiKey 
+        ? `Bearer ${ebApiKey}`
+        : ebPublicToken 
+          ? `Bearer ${ebPublicToken}`
+          : null;
+
+      if (!authHeader) {
+        console.log('No valid Eventbrite credentials found');
+        return [];
+      }
   
       // Note: Eventbrite's public API has limitations
       // Try location-based search first
@@ -824,7 +837,8 @@ const timeStr = `${displayHours}:${minutes.toString().padStart(2, '0')} ${isPM ?
     console.log('Store timezone info:', {
       id: store.id,
       timezone: store.timezone,
-      storeObject: store
+      lat: store.lat,
+      lng: store.lng
     });
     
     // Get current time in store's timezone
