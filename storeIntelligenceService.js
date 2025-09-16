@@ -236,8 +236,7 @@ const storeWeekEnd = new Date(storeTodayStart);
 storeWeekEnd.setDate(storeWeekEnd.getDate() + 7);
 storeWeekEnd.setHours(23, 59, 59, 999);
 
-// Convert back to UTC for API call
-const offsetMinutes = this.parseTimezoneOffset(store.timezone);
+// Convert back to UTC for API call (reuse offsetMinutes from above)
 const startDateTimeUTC = new Date(storeTodayStart.getTime() - (offsetMinutes * 60 * 1000));
 const endDateTimeUTC = new Date(storeWeekEnd.getTime() - (offsetMinutes * 60 * 1000));
 
