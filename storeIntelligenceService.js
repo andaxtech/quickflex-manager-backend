@@ -1779,7 +1779,7 @@ if (event.date.getDay() >= 1 && event.date.getDay() <= 4) {
   - Peak orders occur 45 minutes after events end
   - 1 driver handles 20 pre-event orders or 15 post-event orders
   
-  Response format:
+  Response format (return as JSON):
 {
   "insight": "Write ONE clear sentence that includes: [Event/Condition] at [specific time] - [recommended action] because [brief reason]. Expected: [X%] ([Y orders]) increase. [Any other key condition].",
   "metrics": {
