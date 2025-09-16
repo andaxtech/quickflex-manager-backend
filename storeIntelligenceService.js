@@ -774,10 +774,6 @@ const timeStr = `${displayHours}:${minutes.toString().padStart(2, '0')} ${isPM ?
     return campaigns[urgency];
   }
 
-
-
-
-
   //calculate event impact
 
   calculateEventImpact(capacity, eventDate) {
