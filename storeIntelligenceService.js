@@ -2194,76 +2194,67 @@ if (event.date.getDay() >= 1 && event.date.getDay() <= 4) {
   }
   
   validateStandardResponse(response) {
-    // Your existing validation logic here
     let cleanInsight = response.insight || "Monitor operations closely";
-    // ... rest of existing validation
-  }
-  
-  cleanInsightText(text) {
-    // Your existing time simplification logic
-    return text.substring(0, 200);
-  }
-  
-  // Ensure insight follows the expected pattern
-if (!cleanInsight.toLowerCase().includes('expect')) {
-  // If AI didn't follow format, restructure it
-  const orderIncrease = response.metrics?.expectedOrderIncrease || 0;
-  const orderCount = response.metrics?.expectedOrderCount || Math.floor(orderIncrease * 3);
-  cleanInsight = cleanInsight + `. Expect ${orderIncrease}% (${orderCount} order) change.`;
-}
-  
-  // First, replace specific times with rounded versions
-  cleanInsight = cleanInsight.replace(/(\d{1,2}):(\d{2})\s*(AM|PM)/gi, (match, hours, minutes, period) => {
-    const h = parseInt(hours);
-    const m = parseInt(minutes);
     
-    // Round to nearest 15 minutes
-    const roundedMinutes = Math.round(m / 15) * 15;
-    
-    // For times near the top of the hour, use natural language
-    if (h === 12 && roundedMinutes === 0) {
-      return "noon";
-    } else if (roundedMinutes === 0) {
-      return `${h}${period.toLowerCase()}`;
-    } else if (roundedMinutes === 60) {
-      return `${h + 1}${period.toLowerCase()}`;
-    } else {
-      return `${h}:${roundedMinutes.toString().padStart(2, '0')}${period.toLowerCase()}`;
+    // Ensure insight follows the expected pattern
+    if (!cleanInsight.toLowerCase().includes('expect')) {
+      // If AI didn't follow format, restructure it
+      const orderIncrease = response.metrics?.expectedOrderIncrease || 0;
+      const orderCount = response.metrics?.expectedOrderCount || Math.floor(orderIncrease * 3);
+      cleanInsight = cleanInsight + `. Expect ${orderIncrease}% (${orderCount} order) change.`;
     }
-  });
-  
-  // Then apply the existing simplification
-  cleanInsight = cleanInsight.replace(/(\d{1,2}:\d{2}\s*[ap]m)/gi, (match) => {
-    return this.simplifyTimeFormat(match);
-  });
-  
-  return {
-    insight: cleanInsight.substring(0, 200), // Increased from 100 to 200
-    severity: "info", // Simplified - always info
-    metrics: {
-      expectedOrderIncrease: Math.min(100, Math.max(0, 
-        Number(response.metrics?.expectedOrderIncrease) || 0)),
-      expectedOrderCount: Number(response.metrics?.expectedOrderCount) || 
-        Math.floor((response.metrics?.expectedOrderIncrease || 0) * 3), // Assume baseline of 300 orders
-      recommendedExtraDrivers: Math.min(10, Math.max(0, 
-        Math.floor(Number(response.metrics?.recommendedExtraDrivers) || 0))),
-      confidence: response.metrics?.confidence || "medium"
-    },
-    action: String(response.action || "Monitor orders and adjust as needed").substring(0, 80),
-    // Keep the rest of your existing fields for backward compatibility
-    carryoutPromotion: response.carryoutPromotion ? {
-      discount: Number(response.carryoutPromotion.discount) || 30,
-      message: String(response.carryoutPromotion.message || "Carryout special available"),
-      duration: String(response.carryoutPromotion.duration || "Today only")
-    } : null,
-    preOrderCampaign: response.preOrderCampaign ? {
-      eventName: String(response.preOrderCampaign.eventName || "Upcoming event"),
-      targetOrders: Number(response.preOrderCampaign.targetOrders) || 0,
-      launchTiming: String(response.preOrderCampaign.launchTiming || "Launch today"),
-      message: String(response.preOrderCampaign.message || "Pre-order now")
-    } : null
-  };
-}
+    
+    // First, replace specific times with rounded versions
+    cleanInsight = cleanInsight.replace(/(\d{1,2}):(\d{2})\s*(AM|PM)/gi, (match, hours, minutes, period) => {
+      const h = parseInt(hours);
+      const m = parseInt(minutes);
+      
+      // Round to nearest 15 minutes
+      const roundedMinutes = Math.round(m / 15) * 15;
+      
+      // For times near the top of the hour, use natural language
+      if (h === 12 && roundedMinutes === 0) {
+        return "noon";
+      } else if (roundedMinutes === 0) {
+        return `${h}${period.toLowerCase()}`;
+      } else if (roundedMinutes === 60) {
+        return `${h + 1}${period.toLowerCase()}`;
+      } else {
+        return `${h}:${roundedMinutes.toString().padStart(2, '0')}${period.toLowerCase()}`;
+      }
+    });
+    
+    // Then apply the existing simplification
+    cleanInsight = cleanInsight.replace(/(\d{1,2}:\d{2}\s*[ap]m)/gi, (match) => {
+      return this.simplifyTimeFormat(match);
+    });
+    
+    return {
+      insight: cleanInsight.substring(0, 200),
+      severity: "info",
+      metrics: {
+        expectedOrderIncrease: Math.min(100, Math.max(0, 
+          Number(response.metrics?.expectedOrderIncrease) || 0)),
+        expectedOrderCount: Number(response.metrics?.expectedOrderCount) || 
+          Math.floor((response.metrics?.expectedOrderIncrease || 0) * 3),
+        recommendedExtraDrivers: Math.min(10, Math.max(0, 
+          Math.floor(Number(response.metrics?.recommendedExtraDrivers) || 0))),
+        confidence: response.metrics?.confidence || "medium"
+      },
+      action: String(response.action || "Monitor orders and adjust as needed").substring(0, 80),
+      carryoutPromotion: response.carryoutPromotion ? {
+        discount: Number(response.carryoutPromotion.discount) || 30,
+        message: String(response.carryoutPromotion.message || "Carryout special available"),
+        duration: String(response.carryoutPromotion.duration || "Today only")
+      } : null,
+      preOrderCampaign: response.preOrderCampaign ? {
+        eventName: String(response.preOrderCampaign.eventName || "Upcoming event"),
+        targetOrders: Number(response.preOrderCampaign.targetOrders) || 0,
+        launchTiming: String(response.preOrderCampaign.launchTiming || "Launch today"),
+        message: String(response.preOrderCampaign.message || "Pre-order now")
+      } : null
+    };
+  }
 
   async enforceRateLimit(service = 'general') {
     const limiter = this.rateLimiter[service];
