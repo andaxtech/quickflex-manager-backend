@@ -360,7 +360,7 @@ const response = await axios.get('https://app.ticketmaster.com/discovery/v2/even
     // Sort by date and filter
     const finalEvents = uniqueEvents
       .sort((a, b) => a.date - b.date)
-      .filter(event => event.impact >= 0.3 || event.isToday)
+      .filter(event => event.impact >= 0.2 || event.isToday) // Lowered threshold
       .slice(0, 10);
 
     this.setCache(cacheKey, finalEvents);
@@ -1494,10 +1494,22 @@ await this.enforceRateLimit('google');
     });
     
     const prompt = this.buildCleanPrompt(store, data, context);
-    
-    try {
-      // Rate limiting
-      await this.enforceRateLimit('general');
+
+      // DEBUG: Log the prompt being sent to AI
+      console.log(`🤖 AI Prompt for store ${store.id}:`);
+      console.log(prompt);
+      console.log('📊 Data summary:', {
+        eventsCount: data.events?.length || 0,
+        todayEvents: data.events?.filter(e => e.isToday).length || 0,
+        upcomingEvents: data.events?.filter(e => !e.isToday && e.daysUntilEvent <= 7).length || 0,
+        weather: data.weather?.condition,
+        traffic: data.traffic?.severity,
+        boostWeek: data.boostWeek?.isHighProbabilityPeriod
+      });
+
+      try {
+        // Rate limiting
+        await this.enforceRateLimit('general');
       
       //the AI generation process begins
       const completion = await this.openai.chat.completions.create({
@@ -1518,6 +1530,10 @@ await this.enforceRateLimit('google');
       });
 
       const response = JSON.parse(completion.choices[0].message.content);
+
+      // DEBUG: Log raw AI response
+      console.log(`🎯 Raw AI Response for store ${store.id}:`, response);
+
       const validatedResponse = this.validateResponse(response);
       
       // Return both the AI insight AND the raw external data
@@ -1529,6 +1545,12 @@ await this.enforceRateLimit('google');
       
     } catch (error) {
       console.error('AI generation error:', error);
+      // Log more details about the error
+      if (error.response) {
+        console.error('API Error Response:', error.response.status, error.response.data);
+      }
+      console.error('Prompt that failed:', prompt.substring(0, 500) + '...');
+      
       return {
         ...this.getFallbackInsight(store),
         externalData: data || {},
@@ -1572,6 +1594,12 @@ await this.enforceRateLimit('google');
       
       if (todayEvents.length > 0) {
         prompt.push('', 'TODAY\'S EVENTS:');
+        console.log(`📅 Today's events for prompt:`, todayEvents.map(e => ({
+          name: e.name,
+          venue: e.venue,
+          time: e.time,
+          hoursUntil: e.hoursUntilEvent
+        })));
         todayEvents.forEach(event => {
           if (event.hoursUntilEvent > 0) {
             prompt.push(
