@@ -1530,18 +1530,16 @@ await this.enforceRateLimit('google');
       });
 
       const response = JSON.parse(completion.choices[0].message.content);
+console.log(`🎯 Raw AI Response for store ${store.id}:`, JSON.stringify(response, null, 2));
 
-      // DEBUG: Log raw AI response
-      console.log(`🎯 Raw AI Response for store ${store.id}:`, response);
+const validatedResponse = this.validateResponse(response);
 
-      const validatedResponse = this.validateResponse(response);
-      
-      // Return both the AI insight AND the raw external data
-      return {
-        ...validatedResponse,
-        externalData: data,
-        context: context
-      };
+// Return both the AI insight AND the raw external data
+return {
+  ...validatedResponse,
+  externalData: data,
+  context: context
+};
       
     } catch (error) {
       console.error('AI generation error:', error);
