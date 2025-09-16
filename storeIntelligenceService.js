@@ -296,9 +296,9 @@ const response = await axios.get('https://app.ticketmaster.com/discovery/v2/even
         endDateTimeUTC: endDateTimeUTC.toISOString()
       });
 
-      // Debug event times
+     
         // Summary log only
-        console.log(`${logPrefix} ✅ Filtered to ${events.length} relevant events for today and upcoming`);
+console.log(`✅ Filtered to ${events.length} relevant events for store ${store.id}`);
 
       this.setCache(cacheKey, events);
       return events;
