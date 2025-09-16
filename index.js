@@ -1,5 +1,5 @@
 const express = require('express');
-
+const { startOfWeek, endOfWeek, format, parseISO } = require('date-fns');
 
 const { Storage } = require('@google-cloud/storage');
 const cors = require('cors');
@@ -1564,6 +1564,457 @@ app.get('/api/test-intelligence/:storeId', async (req, res) => {
   } catch (error) {
     console.error('Test error:', error);
     res.status(500).json({ error: error.message });
+  }
+});
+
+// ==================== CHECKLIST ROUTES ====================
+
+// Get all checklist templates
+app.get('/api/checklists/templates', async (req, res) => {
+  try {
+    const templates = await pool.query(`
+      SELECT 
+        t.*,
+        COUNT(i.item_id) as item_count
+      FROM checklist_templates t
+      LEFT JOIN checklist_items i ON t.template_id = i.template_id
+      WHERE t.is_active = true
+      GROUP BY t.template_id
+      ORDER BY t.category, t.name
+    `);
+    
+    res.json({ success: true, templates: templates.rows });
+  } catch (error) {
+    console.error('Error fetching templates:', error);
+    res.status(500).json({ success: false, message: 'Failed to fetch templates' });
+  }
+});
+
+// Get checklist items for a template
+app.get('/api/checklists/templates/:templateId/items', async (req, res) => {
+  const { templateId } = req.params;
+  
+  try {
+    const items = await pool.query(`
+      SELECT * FROM checklist_items
+      WHERE template_id = $1 AND is_active = true
+      ORDER BY sort_order, item_id
+    `, [templateId]);
+    
+    res.json({ success: true, items: items.rows });
+  } catch (error) {
+    console.error('Error fetching items:', error);
+    res.status(500).json({ success: false, message: 'Failed to fetch items' });
+  }
+});
+
+// Get workflows for a store and date
+app.get('/api/stores/:storeId/workflows', async (req, res) => {
+  const { storeId } = req.params;
+  const { date, managerId } = req.query;
+  
+  if (!managerId) {
+    return res.status(400).json({ success: false, message: 'Missing managerId' });
+  }
+  
+  try {
+    // Verify manager has access to this store
+    const accessCheck = await pool.query(`
+      SELECT 1 FROM manager_store_links
+      WHERE manager_id = $1 AND store_id = $2
+    `, [managerId, storeId]);
+    
+    if (accessCheck.rows.length === 0) {
+      return res.status(403).json({ success: false, message: 'Access denied' });
+    }
+    
+    const workflows = await pool.query(`
+      SELECT 
+        w.*,
+        t.name as template_name,
+        t.category,
+        t.frequency,
+        COUNT(DISTINCT c.completion_id) as completed_items,
+        COUNT(DISTINCT i.item_id) as total_items,
+        m.first_name || ' ' || m.last_name as assigned_to_name
+      FROM store_workflows w
+      JOIN checklist_templates t ON w.template_id = t.template_id
+      LEFT JOIN checklist_items i ON t.template_id = i.template_id AND i.is_active = true
+      LEFT JOIN workflow_completions c ON w.workflow_id = c.workflow_id
+      LEFT JOIN managers m ON w.assigned_to = m.manager_id
+      WHERE w.store_id = $1 AND w.date = $2::date
+      GROUP BY w.workflow_id, t.template_id, m.manager_id
+      ORDER BY w.start_time
+    `, [storeId, date]);
+    
+    res.json({ success: true, workflows: workflows.rows });
+  } catch (error) {
+    console.error('Error fetching workflows:', error);
+    res.status(500).json({ success: false, message: 'Failed to fetch workflows' });
+  }
+});
+
+// Create or get workflow for a store/date/template
+app.post('/api/stores/:storeId/workflows', async (req, res) => {
+  const { storeId } = req.params;
+  const { 
+    templateId, 
+    date, 
+    shiftType, 
+    managerId,
+    assignedTo 
+  } = req.body;
+  
+  const client = await pool.connect();
+  
+  try {
+    await client.query('BEGIN');
+    
+    // Get location_id for the store
+    const locationResult = await client.query(`
+      SELECT location_id FROM locations WHERE store_id = $1
+    `, [storeId]);
+    
+    if (locationResult.rows.length === 0) {
+      throw new Error('Store not found');
+    }
+    
+    const locationId = locationResult.rows[0].location_id;
+    
+    // Check if workflow already exists
+    const existingWorkflow = await client.query(`
+      SELECT workflow_id FROM store_workflows
+      WHERE store_id = $1 AND template_id = $2 AND date = $3::date
+        AND (shift_type = $4 OR (shift_type IS NULL AND $4 IS NULL))
+    `, [storeId, templateId, date, shiftType || null]);
+    
+    if (existingWorkflow.rows.length > 0) {
+      await client.query('COMMIT');
+      return res.json({ 
+        success: true, 
+        workflowId: existingWorkflow.rows[0].workflow_id,
+        existing: true 
+      });
+    }
+    
+    // Create new workflow
+    const result = await client.query(`
+      INSERT INTO store_workflows (
+        store_id, location_id, template_id, date, shift_type,
+        created_by, assigned_to, status
+      ) VALUES ($1, $2, $3, $4::date, $5, $6, $7, 'pending')
+      RETURNING workflow_id
+    `, [storeId, locationId, templateId, date, shiftType || null, managerId, assignedTo || managerId]);
+    
+    await client.query('COMMIT');
+    
+    res.json({ 
+      success: true, 
+      workflowId: result.rows[0].workflow_id,
+      existing: false 
+    });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error('Error creating workflow:', error);
+    res.status(500).json({ success: false, message: error.message });
+  } finally {
+    client.release();
+  }
+});
+
+// Get workflow details with items and completions
+app.get('/api/workflows/:workflowId', async (req, res) => {
+  const { workflowId } = req.params;
+  
+  try {
+    // Get workflow details
+    const workflowResult = await pool.query(`
+      SELECT 
+        w.*,
+        t.name as template_name,
+        t.category,
+        t.frequency,
+        l.city,
+        l.store_name
+      FROM store_workflows w
+      JOIN checklist_templates t ON w.template_id = t.template_id
+      JOIN locations l ON w.store_id = l.store_id
+      WHERE w.workflow_id = $1
+    `, [workflowId]);
+    
+    if (workflowResult.rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'Workflow not found' });
+    }
+    
+    const workflow = workflowResult.rows[0];
+    
+    // Get items with completion status
+    const itemsResult = await pool.query(`
+      SELECT 
+        i.*,
+        c.completion_id,
+        c.completed_at,
+        c.completed_by,
+        c.value,
+        c.notes,
+        c.photo_url,
+        m.first_name || ' ' || m.last_name as completed_by_name
+      FROM checklist_items i
+      LEFT JOIN workflow_completions c ON i.item_id = c.item_id AND c.workflow_id = $1
+      LEFT JOIN managers m ON c.completed_by = m.manager_id
+      WHERE i.template_id = $2 AND i.is_active = true
+      ORDER BY i.sort_order, i.item_id
+    `, [workflowId, workflow.template_id]);
+    
+    res.json({ 
+      success: true, 
+      workflow,
+      items: itemsResult.rows 
+    });
+  } catch (error) {
+    console.error('Error fetching workflow details:', error);
+    res.status(500).json({ success: false, message: 'Failed to fetch workflow details' });
+  }
+});
+
+// Complete a checklist item
+app.post('/api/workflows/:workflowId/items/:itemId/complete', async (req, res) => {
+  const { workflowId, itemId } = req.params;
+  const { managerId, value, notes, photoUrl } = req.body;
+  
+  const client = await pool.connect();
+  
+  try {
+    await client.query('BEGIN');
+    
+    // Get item details for validation
+    const itemResult = await client.query(`
+      SELECT * FROM checklist_items WHERE item_id = $1
+    `, [itemId]);
+    
+    if (itemResult.rows.length === 0) {
+      throw new Error('Item not found');
+    }
+    
+    const item = itemResult.rows[0];
+    
+    // Validate value based on item type
+    let isCompliant = true;
+    if (item.item_type === 'temperature') {
+      const numValue = parseFloat(value);
+      if (item.min_value && numValue < item.min_value) isCompliant = false;
+      if (item.max_value && numValue > item.max_value) isCompliant = false;
+    }
+    
+    // Check if already completed
+    const existingCompletion = await client.query(`
+      SELECT completion_id FROM workflow_completions
+      WHERE workflow_id = $1 AND item_id = $2
+    `, [workflowId, itemId]);
+    
+    if (existingCompletion.rows.length > 0) {
+      // Update existing completion
+      await client.query(`
+        UPDATE workflow_completions
+        SET value = $1, is_compliant = $2, notes = $3, photo_url = $4,
+            completed_by = $5, completed_at = NOW()
+        WHERE workflow_id = $6 AND item_id = $7
+      `, [value, isCompliant, notes, photoUrl, managerId, workflowId, itemId]);
+    } else {
+      // Insert new completion
+      await client.query(`
+        INSERT INTO workflow_completions (
+          workflow_id, item_id, completed_by, value, is_compliant, notes, photo_url
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7)
+      `, [workflowId, itemId, managerId, value, isCompliant, notes, photoUrl]);
+    }
+    
+    // Update workflow status and compliance percentage
+    await client.query(`
+      UPDATE store_workflows
+      SET status = 'in_progress',
+          compliance_percentage = (
+            SELECT COUNT(c.completion_id)::numeric / COUNT(i.item_id)::numeric * 100
+            FROM checklist_items i
+            LEFT JOIN workflow_completions c ON i.item_id = c.item_id AND c.workflow_id = $1
+            WHERE i.template_id = (SELECT template_id FROM store_workflows WHERE workflow_id = $1)
+              AND i.is_active = true
+          )
+      WHERE workflow_id = $1
+    `, [workflowId]);
+    
+    // Check if workflow is complete
+    const completionCheck = await client.query(`
+      SELECT 
+        COUNT(DISTINCT i.item_id) as total_items,
+        COUNT(DISTINCT c.item_id) as completed_items
+      FROM checklist_items i
+      LEFT JOIN workflow_completions c ON i.item_id = c.item_id AND c.workflow_id = $1
+      WHERE i.template_id = (SELECT template_id FROM store_workflows WHERE workflow_id = $1)
+        AND i.is_active = true
+        AND i.required = true
+    `, [workflowId]);
+    
+    const { total_items, completed_items } = completionCheck.rows[0];
+    if (total_items === completed_items) {
+      await client.query(`
+        UPDATE store_workflows
+        SET status = 'completed', completed_at = NOW()
+        WHERE workflow_id = $1
+      `, [workflowId]);
+    }
+    
+    // Log temperature if applicable
+    if (item.item_type === 'temperature') {
+      const workflowInfo = await client.query(`
+        SELECT store_id, location_id FROM store_workflows WHERE workflow_id = $1
+      `, [workflowId]);
+      
+      const { store_id, location_id } = workflowInfo.rows[0];
+      
+      await client.query(`
+        INSERT INTO temperature_logs (
+          store_id, location_id, equipment_type, temperature, 
+          is_compliant, logged_by, workflow_id
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7)
+      `, [store_id, location_id, item.category, parseFloat(value), isCompliant, managerId, workflowId]);
+    }
+    
+    // Check for critical violations
+    if (item.critical_violation && !isCompliant) {
+      const workflowInfo = await client.query(`
+        SELECT store_id, location_id FROM store_workflows WHERE workflow_id = $1
+      `, [workflowId]);
+      
+      const { store_id, location_id } = workflowInfo.rows[0];
+      
+      await client.query(`
+        INSERT INTO critical_violations (
+          store_id, location_id, violation_type, description,
+          severity, points_deducted, discovered_by, workflow_id
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+      `, [
+        store_id, 
+        location_id, 
+        item.category, 
+        `${item.item_text} - Value: ${value}`,
+        'high',
+        10,
+        managerId,
+        workflowId
+      ]);
+    }
+    
+    await client.query('COMMIT');
+    
+    res.json({ success: true, isCompliant });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error('Error completing item:', error);
+    res.status(500).json({ success: false, message: error.message });
+  } finally {
+    client.release();
+  }
+});
+
+// Get temperature logs for a store
+app.get('/api/stores/:storeId/temperatures', async (req, res) => {
+  const { storeId } = req.params;
+  const { date, equipment } = req.query;
+  
+  try {
+    let query = `
+      SELECT 
+        t.*,
+        m.first_name || ' ' || m.last_name as logged_by_name
+      FROM temperature_logs t
+      LEFT JOIN managers m ON t.logged_by = m.manager_id
+      WHERE t.store_id = $1
+    `;
+    
+    const params = [storeId];
+    let paramIndex = 2;
+    
+    if (date) {
+      query += ` AND DATE(t.logged_at) = $${paramIndex}::date`;
+      params.push(date);
+      paramIndex++;
+    }
+    
+    if (equipment) {
+      query += ` AND t.equipment_type = $${paramIndex}`;
+      params.push(equipment);
+    }
+    
+    query += ' ORDER BY t.logged_at DESC LIMIT 100';
+    
+    const result = await pool.query(query, params);
+    
+    res.json({ success: true, temperatures: result.rows });
+  } catch (error) {
+    console.error('Error fetching temperatures:', error);
+    res.status(500).json({ success: false, message: 'Failed to fetch temperatures' });
+  }
+});
+
+// Get store compliance summary
+app.get('/api/stores/:storeId/compliance', async (req, res) => {
+  const { storeId } = req.params;
+  const { startDate, endDate } = req.query;
+  
+  try {
+    // Overall compliance percentage
+    const complianceResult = await pool.query(`
+      SELECT 
+        AVG(compliance_percentage) as average_compliance,
+        COUNT(CASE WHEN status = 'completed' THEN 1 END) as completed_checklists,
+        COUNT(CASE WHEN status = 'missed' THEN 1 END) as missed_checklists,
+        COUNT(*) as total_checklists
+      FROM store_workflows
+      WHERE store_id = $1 
+        AND date >= $2::date 
+        AND date <= $3::date
+    `, [storeId, startDate || 'NOW() - INTERVAL \'30 days\'', endDate || 'NOW()']);
+    
+    // Recent violations
+    const violationsResult = await pool.query(`
+      SELECT 
+        v.*,
+        m.first_name || ' ' || m.last_name as discovered_by_name
+      FROM critical_violations v
+      LEFT JOIN managers m ON v.discovered_by = m.manager_id
+      WHERE v.store_id = $1 
+        AND v.discovered_at >= NOW() - INTERVAL '30 days'
+        AND v.resolved_at IS NULL
+      ORDER BY v.discovered_at DESC
+      LIMIT 10
+    `, [storeId]);
+    
+    // Compliance by category
+    const categoryResult = await pool.query(`
+      SELECT 
+        i.category,
+        COUNT(DISTINCT c.completion_id) as completed_items,
+        COUNT(DISTINCT i.item_id) as total_items,
+        COUNT(DISTINCT CASE WHEN c.is_compliant = false THEN c.completion_id END) as non_compliant_items
+      FROM store_workflows w
+      JOIN checklist_items i ON i.template_id = w.template_id
+      LEFT JOIN workflow_completions c ON c.workflow_id = w.workflow_id AND c.item_id = i.item_id
+      WHERE w.store_id = $1 
+        AND w.date >= $2::date
+        AND i.is_active = true
+      GROUP BY i.category
+    `, [storeId, startDate || 'NOW() - INTERVAL \'7 days\'']);
+    
+    res.json({
+      success: true,
+      compliance: complianceResult.rows[0],
+      violations: violationsResult.rows,
+      categoryBreakdown: categoryResult.rows
+    });
+  } catch (error) {
+    console.error('Error fetching compliance:', error);
+    res.status(500).json({ success: false, message: 'Failed to fetch compliance data' });
   }
 });
 
