@@ -1779,7 +1779,7 @@ if (event.date.getDay() >= 1 && event.date.getDay() <= 4) {
   
   Response format (return as JSON):
 {
-  "insight": "Write ONE clear sentence that includes: [Event/Condition] at [specific time] - [recommended action] because [brief reason]. Expected: [X%] ([Y orders]) increase. [Any other key condition].",
+  "insight": "Write ONE clear sentence that includes: [Event/Condition] at [specific time] - [recommended action] because [brief reason]. Expected: [X%] or around ([Y orders]) increase. [Any other key condition].",
   "metrics": {
     "expectedOrderIncrease": percentage,
     "expectedOrderCount": number,
