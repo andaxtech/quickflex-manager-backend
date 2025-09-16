@@ -2017,7 +2017,7 @@ if (event.date.getDay() >= 1 && event.date.getDay() <= 4) {
   - System checks: PULSE terminals, make line refrigeration
   - Inventory assessment and truck order review
   
-  Response format for MORNING:
+  You must respond in JSON format.Response format for MORNING:
   {
     "insight": "Focus on [specific opening task] because [reason]. [Weather/traffic impact on lunch prep]. [Any pre-orders or events affecting today].",
     "metrics": {
@@ -2046,7 +2046,7 @@ if (event.date.getDay() >= 1 && event.date.getDay() <= 4) {
   - Monitor topping hold times and temps
   - Prepare for afternoon transition
   
-  Response format for LUNCH:
+  You must respond in JSON format.Response format for LUNCH:
   {
     "insight": "[Current condition] affecting lunch - [action needed]. Expect [X]% ([Y] orders) vs normal. [Key metric] needs attention.",
     "metrics": {
@@ -2071,7 +2071,7 @@ if (event.date.getDay() >= 1 && event.date.getDay() <= 4) {
   - Check inventory levels for evening
   - Address any lunch period issues
   
-  Response format for AFTERNOON:
+  You must respond in JSON format.Response format for AFTERNOON:
   {
     "insight": "[Prep status] for dinner rush. [Staffing or inventory concern]. [Event/weather impact] on evening demand.",
     "metrics": {
@@ -2095,7 +2095,7 @@ if (event.date.getDay() >= 1 && event.date.getDay() <= 4) {
   - Approve remakes for quality
   - Balance labor to demand
   
-  Response format for EVENING:
+  You must respond in JSON format.Response format for EVENING:
   {
     "insight": "[Event/condition] at [time] - [staffing action] for [reason]. Expect [X]% ([Y] orders) increase. [Current metric status].",
     "metrics": {
@@ -2120,7 +2120,7 @@ if (event.date.getDay() >= 1 && event.date.getDay() <= 4) {
   - Ensure deposit and waste tracking
   - Prepare tomorrow's opening needs
   
-  Response format for LATE NIGHT:
+  You must respond in JSON format.Response format for LATE NIGHT:
   {
     "insight": "[Current status] - begin [specific closing task]. [Tomorrow prep needed]. Labor at [X]% of sales.",
     "metrics": {
