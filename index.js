@@ -2127,6 +2127,102 @@ app.get('/api/stores/:storeId/compliance', async (req, res) => {
 });
 
 
+// Get detailed store data (weather + intelligence)
+app.get('/api/store-details/:storeId', async (req, res) => {
+  const { storeId } = req.params;
+  const { managerId } = req.query;
+
+  if (!storeId || !managerId) {
+    return res.status(400).json({ 
+      success: false, 
+      message: 'Missing storeId or managerId' 
+    });
+  }
+
+  try {
+    // Verify access and get store data
+    const query = `
+      SELECT 
+        l.store_id AS id, 
+        l.city, 
+        l.region as state, 
+        l.location_id AS "locationId",
+        l.time_zone_code as "timeZoneCode",
+        l.store_latitude,
+        l.store_longitude
+      FROM manager_store_links msl
+      JOIN locations l ON msl.store_id = l.store_id
+      WHERE msl.manager_id = $1 AND l.store_id = $2
+    `;
+    const result = await pool.query(query, [managerId, storeId]);
+
+    if (result.rows.length === 0) {
+      return res.status(403).json({ 
+        success: false, 
+        message: 'Access denied to this store' 
+      });
+    }
+
+    const store = result.rows[0];
+
+    // Get weather
+    const weatherData = await weatherService.getWeatherForStores([{
+      store_id: store.id,
+      state: store.state,
+      timeZoneCode: store.timeZoneCode,
+      latitude: store.store_latitude,
+      longitude: store.store_longitude
+    }]);
+
+    // Get shift stats
+    const shifts = await getStoreShiftStats(store.locationId);
+    store.shifts = shifts;
+
+    // Get intelligence
+    let intelligenceData = null;
+    try {
+      intelligenceData = await intelligenceService.generateStoreInsight(store);
+    } catch (error) {
+      console.error(`Failed to get intelligence for store ${store.id}:`, error);
+    }
+
+    const externalData = intelligenceData?._externalData || {};
+
+    res.json({
+      success: true,
+      store: {
+        ...store,
+        weather: externalData.weather || weatherData[store.id] || null,
+        shifts: shifts,
+        intelligence: intelligenceData ? {
+          insight: intelligenceData.insight,
+          severity: intelligenceData.severity,
+          metrics: intelligenceData.metrics,
+          action: intelligenceData.action,
+          todayActions: intelligenceData.todayActions,
+          weekOutlook: intelligenceData.weekOutlook,
+          carryoutPromotion: intelligenceData.carryoutPromotion,
+          preOrderCampaign: intelligenceData.preOrderCampaign,
+          promotionSuggestion: intelligenceData.promotionSuggestion,
+          laborAdjustment: intelligenceData.laborAdjustment
+        } : null,
+        events: externalData.events || [],
+        traffic: externalData.traffic || null,
+        deliveryCapacity: externalData.deliveryCapacity || null,
+        boostWeek: externalData.boostWeek || null,
+        slowPeriod: externalData.slowPeriod || null,
+        upcomingHoliday: externalData.upcomingHoliday || null
+      }
+    });
+  } catch (error) {
+    console.error('Error fetching store details:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Failed to fetch store details' 
+    });
+  }
+});
+
 
 const PORT = process.env.PORT || 5003;
 app.listen(PORT, () => {
