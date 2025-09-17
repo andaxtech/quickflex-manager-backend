@@ -937,16 +937,17 @@ const enrichedStores = await Promise.all(
   result.rows.map(async (store, index) => {
     const weather = weatherMap[store.id];
     
-    // Get full intelligence for each store
-    let intelligenceData = null;
-    try {
-      intelligenceData = await intelligenceService.generateStoreInsight({
-        ...store,
-        shifts: shiftResults[index]
-      });
-    } catch (error) {
-      console.error(`Failed to get intelligence for store ${store.id}:`, error);
-    }
+    // Skip intelligence generation in the main endpoint
+let intelligenceData = null;
+// Comment out for now - move to separate endpoint
+// try {
+//   intelligenceData = await intelligenceService.generateStoreInsight({
+//     ...store,
+//     shifts: shiftResults[index]
+//   });
+// } catch (error) {
+//   console.error(`Failed to get intelligence for store ${store.id}:`, error);
+// }
     
     // Extract external data from intelligence response (_externalData from your updated service)
     const externalData = intelligenceData?._externalData || {};
