@@ -1972,9 +1972,9 @@ app.get('/api/stores/:storeId/compliance', async (req, res) => {
         COUNT(*) as total_checklists
       FROM store_workflows
       WHERE store_id = $1 
-        AND date >= $2::date 
-        AND date <= $3::date
-    `, [storeId, startDate || 'NOW() - INTERVAL \'30 days\'', endDate || 'NOW()']);
+        AND date >= COALESCE($2::date, CURRENT_DATE - INTERVAL '30 days')
+        AND date <= COALESCE($3::date, CURRENT_DATE)
+    `, [storeId, startDate || null, endDate || null]);
     
     // Recent violations
     const violationsResult = await pool.query(`
