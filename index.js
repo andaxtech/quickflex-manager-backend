@@ -2001,10 +2001,10 @@ app.get('/api/stores/:storeId/compliance', async (req, res) => {
       JOIN checklist_items i ON i.template_id = w.template_id
       LEFT JOIN workflow_completions c ON c.workflow_id = w.workflow_id AND c.item_id = i.item_id
       WHERE w.store_id = $1 
-        AND w.date >= $2::date
+        AND w.date >= COALESCE($2::date, CURRENT_DATE - INTERVAL '7 days')
         AND i.is_active = true
       GROUP BY i.category
-    `, [storeId, startDate || 'NOW() - INTERVAL \'7 days\'']);
+    `, [storeId, startDate || null]);
     
     res.json({
       success: true,
