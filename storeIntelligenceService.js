@@ -605,6 +605,7 @@ const isToday = eventStoreMs >= storeTodayStartMs && eventStoreMs < (storeTodayS
   
       const venues = response.data.results.slice(0, 5).map(place => {
         const eventDate = new Date();
+eventDate.setHours(eventDate.getHours() + Math.floor(Math.random() * 48)); // Simulate events over next 48 hours
         const capacity = place.user_ratings_total ? place.user_ratings_total * 10 : 5000;
         
         return {
@@ -689,28 +690,14 @@ const eventStoreMs = eventDateUTC.getTime() + (offsetMinutes * 60 * 1000);
 // Check if event is today in store's timezone
 const isToday = eventStoreMs >= todayStartStoreMs && eventStoreMs < tomorrowStartStoreMs;
 
-// DEBUG: Log the calculation
-console.log(`Event: ${event.name}`);
-console.log(`  Event UTC: ${eventDateUTC.toISOString()}`);
-console.log(`  Store timezone: ${store.timezone}`);
-console.log(`  Today start (store): ${new Date(todayStartStoreMs).toISOString()}`);
-console.log(`  Tomorrow start (store): ${new Date(tomorrowStartStoreMs).toISOString()}`);
-console.log(`  Event (store time): ${new Date(eventStoreMs).toISOString()}`);
-console.log(`  Is today: ${isToday}`);
-console.log(`  Days until: ${daysUntilEvent}`);
 
 // Calculate hours until event directly
 const hoursUntilEvent = (eventDateUTC - nowUTC) / (1000 * 60 * 60);
 
-// Calculate days until event based on date boundaries, not just hours
-let daysUntilEvent;
-if (isToday) {
-  daysUntilEvent = 0;
-} else {
-  const eventStoreDateMs = Math.floor(eventStoreMs / (24 * 60 * 60 * 1000)) * (24 * 60 * 60 * 1000);
-  const todayStoreDateMs = Math.floor(todayStartStoreMs / (24 * 60 * 60 * 1000)) * (24 * 60 * 60 * 1000);
-  daysUntilEvent = Math.round((eventStoreDateMs - todayStoreDateMs) / (24 * 60 * 60 * 1000));
-}
+// Calculate days until event properly
+const eventStoreDateStartMs = new Date(eventStoreMs).setHours(0, 0, 0, 0);
+const todayStoreDateStartMs = new Date(storeNowMs).setHours(0, 0, 0, 0);
+const daysUntilEvent = Math.round((eventStoreDateStartMs - todayStoreDateStartMs) / (24 * 60 * 60 * 1000));
 
 const isPastToday = isToday && hoursUntilEvent < 0;
 // Format time in store's timezone
