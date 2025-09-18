@@ -449,7 +449,13 @@ const isToday = eventStoreMs >= storeTodayStartMs && eventStoreMs < (storeTodayS
           type: event.type,
           impact: this.calculateEventImpact(event.venue.capacity || 5000, eventDateUTC),
           hoursUntilEvent,
-          daysUntilEvent: Math.floor(hoursUntilEvent / 24),
+          daysUntilEvent: (() => {
+            const eventStoreDate = new Date(eventStoreMs);
+            const todayStoreDate = new Date(storeNowMs);
+            eventStoreDate.setHours(0, 0, 0, 0);
+            todayStoreDate.setHours(0, 0, 0, 0);
+            return Math.round((eventStoreDate.getTime() - todayStoreDate.getTime()) / (24 * 60 * 60 * 1000));
+          })(),
           isToday,
           isPastToday: isToday && hoursUntilEvent < 0,
           source: 'seatgeek',

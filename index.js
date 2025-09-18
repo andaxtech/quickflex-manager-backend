@@ -2005,15 +2005,16 @@ app.post('/api/workflows/:workflowId/items/:itemId/complete', async (req, res) =
     // Update workflow status and compliance percentage
     await client.query(`
       UPDATE store_workflows
-      SET status = 'in_progress',
-          compliance_percentage = (
-            SELECT COUNT(c.completion_id)::numeric / COUNT(i.item_id)::numeric * 100
-            FROM checklist_items i
-            LEFT JOIN workflow_completions c ON i.item_id = c.item_id AND c.workflow_id = $1
-            WHERE i.template_id = (SELECT template_id FROM store_workflows WHERE workflow_id = $1)
-              AND i.is_active = true
-          )
-      WHERE workflow_id = $1
+        SET status = 'in_progress',
+            compliance_percentage = (
+              SELECT 
+                COUNT(DISTINCT c.item_id)::numeric / NULLIF(COUNT(DISTINCT i.item_id)::numeric, 0) * 100
+              FROM checklist_items i
+              LEFT JOIN workflow_completions c ON i.item_id = c.item_id AND c.workflow_id = $1
+              WHERE i.template_id = (SELECT template_id FROM store_workflows WHERE workflow_id = $1)
+                AND i.is_active = true
+            )
+        WHERE workflow_id = $1
     `, [workflowId]);
     
     // Check if workflow is complete
