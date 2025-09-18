@@ -1827,7 +1827,8 @@ app.get('/api/stores/:storeId/workflows', async (req, res) => {
   }
 });
 
-// Create or get workflow for a store/date/template
+
+// ADMIN/SYSTEM USE ONLY - Not for manager app
 app.post('/api/stores/:storeId/workflows', async (req, res) => {
   const { storeId } = req.params;
   const { 
@@ -1835,8 +1836,17 @@ app.post('/api/stores/:storeId/workflows', async (req, res) => {
     date, 
     shiftType, 
     managerId,
-    assignedTo 
+    assignedTo,
+    adminKey 
   } = req.body;
+  
+  // Check for admin authentication
+  if (!adminKey || adminKey !== process.env.ADMIN_API_KEY) {
+    return res.status(403).json({ 
+      success: false, 
+      message: 'Unauthorized - Admin access required' 
+    });
+  }
   
   const client = await pool.connect();
   
