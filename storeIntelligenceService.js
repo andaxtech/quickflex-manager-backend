@@ -689,6 +689,16 @@ const eventStoreMs = eventDateUTC.getTime() + (offsetMinutes * 60 * 1000);
 // Check if event is today in store's timezone
 const isToday = eventStoreMs >= todayStartStoreMs && eventStoreMs < tomorrowStartStoreMs;
 
+// DEBUG: Log the calculation
+console.log(`Event: ${event.name}`);
+console.log(`  Event UTC: ${eventDateUTC.toISOString()}`);
+console.log(`  Store timezone: ${store.timezone}`);
+console.log(`  Today start (store): ${new Date(todayStartStoreMs).toISOString()}`);
+console.log(`  Tomorrow start (store): ${new Date(tomorrowStartStoreMs).toISOString()}`);
+console.log(`  Event (store time): ${new Date(eventStoreMs).toISOString()}`);
+console.log(`  Is today: ${isToday}`);
+console.log(`  Days until: ${daysUntilEvent}`);
+
 // Calculate hours until event directly
 const hoursUntilEvent = (eventDateUTC - nowUTC) / (1000 * 60 * 60);
 
