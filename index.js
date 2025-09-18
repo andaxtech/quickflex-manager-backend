@@ -1813,7 +1813,7 @@ app.get('/api/stores/:storeId/workflows', async (req, res) => {
       FROM store_workflows w
       JOIN checklist_templates t ON w.template_id = t.template_id
       LEFT JOIN checklist_items i ON t.template_id = i.template_id AND i.is_active = true
-      LEFT JOIN workflow_completions c ON w.workflow_id = c.workflow_id
+      LEFT JOIN workflow_completions c ON w.workflow_id = c.workflow_id AND c.item_id = i.item_id
       LEFT JOIN managers m ON w.assigned_to = m.manager_id
       WHERE w.store_id = $1 AND w.date = $2::date
       GROUP BY w.workflow_id, t.template_id, m.manager_id
