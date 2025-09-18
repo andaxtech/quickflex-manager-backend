@@ -1038,7 +1038,12 @@ app.get('/api/stores/:storeId/intelligence-data', async (req, res) => {
         promotionSuggestion: intelligenceData.promotionSuggestion,
         laborAdjustment: intelligenceData.laborAdjustment
       } : null,
-      events: externalData.events || [],
+      events: (externalData.events || []).map(event => ({
+        ...event,
+        date: event.date instanceof Date ? event.date.toISOString() : event.date,
+        isToday: event.isToday || false,
+        daysUntilEvent: event.daysUntilEvent || 0
+      })),
       traffic: externalData.traffic || null,
       deliveryCapacity: externalData.deliveryCapacity || null,
       boostWeek: externalData.boostWeek || null,
