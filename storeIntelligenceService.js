@@ -672,10 +672,6 @@ const eventDateUTC = new Date(event.dates.start.dateTime);
 // Get current UTC time (Date() already returns UTC internally)
 const nowUTC = new Date();
 
-// Calculate hours until event directly
-const hoursUntilEvent = (eventDateUTC - nowUTC) / (1000 * 60 * 60);
-const daysUntilEvent = Math.ceil(hoursUntilEvent / 24);
-
 // For "today" check, use store's timezone from database
 const offsetMinutes = this.parseTimezoneOffset(store.timezone);
 
@@ -685,15 +681,28 @@ const storeNowMs = nowUTC.getTime() + (offsetMinutes * 60 * 1000);
 const totalMinutesStore = Math.floor(storeNowMs / 60000);
 const dayMinutesStore = ((totalMinutesStore % (24 * 60)) + (24 * 60)) % (24 * 60);
 const todayStartStoreMs = storeNowMs - (dayMinutesStore * 60000);
-const tomorrowStartStoreMs = todayStartStoreMs + (24 * 60 * 60 * 1000); // ADD THIS LINE
+const tomorrowStartStoreMs = todayStartStoreMs + (24 * 60 * 60 * 1000);
 
 // Convert event UTC to store local time
 const eventStoreMs = eventDateUTC.getTime() + (offsetMinutes * 60 * 1000);
 
 // Check if event is today in store's timezone
 const isToday = eventStoreMs >= todayStartStoreMs && eventStoreMs < tomorrowStartStoreMs;
-const isPastToday = isToday && hoursUntilEvent < 0;
 
+// Calculate hours until event directly
+const hoursUntilEvent = (eventDateUTC - nowUTC) / (1000 * 60 * 60);
+
+// Calculate days until event based on date boundaries, not just hours
+let daysUntilEvent;
+if (isToday) {
+  daysUntilEvent = 0;
+} else {
+  const eventStoreDateMs = Math.floor(eventStoreMs / (24 * 60 * 60 * 1000)) * (24 * 60 * 60 * 1000);
+  const todayStoreDateMs = Math.floor(todayStartStoreMs / (24 * 60 * 60 * 1000)) * (24 * 60 * 60 * 1000);
+  daysUntilEvent = Math.round((eventStoreDateMs - todayStoreDateMs) / (24 * 60 * 60 * 1000));
+}
+
+const isPastToday = isToday && hoursUntilEvent < 0;
 // Format time in store's timezone
 const totalMinutesEvent = Math.floor(eventStoreMs / 60000);
 const dayMinutesEvent = ((totalMinutesEvent % (24 * 60)) + (24 * 60)) % (24 * 60);
