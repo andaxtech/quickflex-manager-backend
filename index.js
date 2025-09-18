@@ -947,22 +947,20 @@ const enrichedStores = result.rows.map((store, index) => ({
   upcomingHoliday: null
 }));
 
+// If basic flag is set, return minimal data immediately
+if (basic === 'true') {
+  const basicStores = result.rows.map(store => ({
+    id: store.id,
+    city: store.city,
+    state: store.state,
+    locationId: store.locationId,
+    shifts: { open: 0, booked: 0 } // Placeholder
+  }));
+  return res.json({ success: true, stores: basicStores });
+}
+
 // Send response immediately
 res.json({ success: true, stores: enrichedStores });
-
-   // If basic flag is set, return minimal data immediately
-   if (basic === 'true') {
-    const basicStores = result.rows.map(store => ({
-      id: store.id,
-      city: store.city,
-      state: store.state,
-      locationId: store.locationId,
-      shifts: { open: 0, booked: 0 } // Placeholder
-    }));
-    return res.json({ success: true, stores: basicStores });
-  }
-
-  res.json({ success: true, stores: enrichedStores });
 } catch (err) {
   console.error('❌ Error fetching manager stores:', err);
   res.status(500).json({ success: false, message: 'Internal server error' });
