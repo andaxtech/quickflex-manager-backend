@@ -2018,25 +2018,42 @@ app.post('/api/workflows/:workflowId/items/:itemId/complete', async (req, res) =
     `, [workflowId]);
     
     // Check if workflow is complete
-    const completionCheck = await client.query(`
-      SELECT 
-        COUNT(DISTINCT i.item_id) as total_items,
-        COUNT(DISTINCT c.item_id) as completed_items
-      FROM checklist_items i
-      LEFT JOIN workflow_completions c ON i.item_id = c.item_id AND c.workflow_id = $1
-      WHERE i.template_id = (SELECT template_id FROM store_workflows WHERE workflow_id = $1)
-        AND i.is_active = true
-        AND i.required = true
-    `, [workflowId]);
+    // Check if ALL items (not just required) are completed
+const completionCheck = await client.query(`
+  SELECT 
+    COUNT(DISTINCT i.item_id) as total_items,
+    COUNT(DISTINCT c.item_id) as completed_items
+  FROM checklist_items i
+  LEFT JOIN workflow_completions c ON i.item_id = c.item_id AND c.workflow_id = $1
+  WHERE i.template_id = (SELECT template_id FROM store_workflows WHERE workflow_id = $1)
+    AND i.is_active = true
+`, [workflowId]);
+
+const { total_items, completed_items } = completionCheck.rows[0];
+
+// Update workflow status based on completion
+if (parseInt(total_items) === parseInt(completed_items) && parseInt(total_items) > 0) {
+  // All items completed
+  await client.query(`
+    UPDATE store_workflows
+    SET status = 'completed', 
+        completed_at = NOW(),
+        compliance_percentage = 100
+    WHERE workflow_id = $1
+  `, [workflowId]);
+} else {
+  // Still in progress
+  const percentage = parseInt(total_items) > 0 
+    ? Math.round((parseInt(completed_items) / parseInt(total_items)) * 100)
+    : 0;
     
-    const { total_items, completed_items } = completionCheck.rows[0];
-    if (total_items === completed_items) {
-      await client.query(`
-        UPDATE store_workflows
-        SET status = 'completed', completed_at = NOW()
-        WHERE workflow_id = $1
-      `, [workflowId]);
-    }
+  await client.query(`
+    UPDATE store_workflows
+    SET status = 'in_progress',
+        compliance_percentage = $2
+    WHERE workflow_id = $1
+  `, [workflowId, percentage]);
+}
     
     // Log temperature if applicable
     if (item.item_type === 'temperature') {
@@ -2081,7 +2098,24 @@ app.post('/api/workflows/:workflowId/items/:itemId/complete', async (req, res) =
     
     await client.query('COMMIT');
     
-    res.json({ success: true, isCompliant });
+    // Return updated workflow status
+const updatedWorkflow = await client.query(`
+  SELECT 
+    w.*,
+    COUNT(DISTINCT c.completion_id) as completed_items,
+    COUNT(DISTINCT i.item_id) as total_items
+  FROM store_workflows w
+  JOIN checklist_items i ON w.template_id = i.template_id AND i.is_active = true
+  LEFT JOIN workflow_completions c ON w.workflow_id = c.workflow_id AND c.item_id = i.item_id
+  WHERE w.workflow_id = $1
+  GROUP BY w.workflow_id
+`, [workflowId]);
+
+res.json({ 
+  success: true, 
+  isCompliant,
+  workflow: updatedWorkflow.rows[0]
+});
   } catch (error) {
     await client.query('ROLLBACK');
     console.error('Error completing item:', error);
