@@ -1909,33 +1909,13 @@ app.get('/api/workflows/:workflowId', async (req, res) => {
     
     const workflow = workflowResult.rows[0];
     
-    // Get items with completion status including new fields
+    // Get items with completion status
     const itemsResult = await pool.query(`
       SELECT 
         i.*,
         i.instructions,
         i.point_value,
         i.time_limit,
-        c.completion_id,
-        c.completed_at,
-        c.completed_by,
-        c.value,
-        c.notes,
-        c.photo_url,
-        m.first_name || ' ' || m.last_name as completed_by_name
-      FROM checklist_items i
-      LEFT JOIN workflow_completions c ON i.item_id = c.item_id AND c.workflow_id = $1
-      LEFT JOIN managers m ON c.completed_by = m.manager_id
-      WHERE i.template_id = $2 AND i.is_active = true
-      ORDER BY i.sort_order, i.item_id
-    `, [workflowId, workflow.template_id]);
-    
-    const workflow = workflowResult.rows[0];
-    
-    // Get items with completion status
-    const itemsResult = await pool.query(`
-      SELECT 
-        i.*,
         c.completion_id,
         c.completed_at,
         c.completed_by,
