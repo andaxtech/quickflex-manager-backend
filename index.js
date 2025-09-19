@@ -1841,7 +1841,44 @@ app.post('/api/stores/:storeId/workflows/generate', async (req, res) => {
   }
   
   try {
-    // Call the new function we created
+    // First check if workflows already exist
+    const existingCheck = await pool.query(
+      'SELECT COUNT(*) as count FROM store_workflows WHERE store_id = $1 AND date = $2::date',
+      [storeId, date || 'CURRENT_DATE']
+    );
+    
+    if (existingCheck.rows[0].count > 0) {
+      // Workflows already exist, just return them
+      const workflows = await pool.query(`
+        SELECT 
+          w.*,
+          t.name as template_name,
+          t.category,
+          t.frequency,
+          COUNT(DISTINCT i.item_id) as total_items
+        FROM store_workflows w
+        JOIN checklist_templates t ON w.template_id = t.template_id
+        LEFT JOIN checklist_items i ON t.template_id = i.template_id AND i.is_active = true
+        WHERE w.store_id = $1 
+          AND w.date = $2::date
+        GROUP BY w.workflow_id, t.template_id
+        ORDER BY 
+          CASE t.frequency 
+            WHEN 'daily' THEN 1
+            WHEN 'weekly' THEN 2
+            WHEN 'monthly' THEN 3
+          END
+      `, [storeId, date || 'CURRENT_DATE']);
+      
+      return res.json({ 
+        success: true, 
+        created: 0,
+        workflows: workflows.rows,
+        message: 'Workflows already exist'
+      });
+    }
+    
+    // No workflows exist, generate them
     const result = await pool.query(
       'SELECT generate_manager_workflows($1, $2, $3::date) as created_count',
       [storeId, managerId, date || 'CURRENT_DATE']
