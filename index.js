@@ -2510,10 +2510,10 @@ cron.schedule('0 4 * * *', async () => {
   console.log('Generating daily workflows...');
   try {
     // Call your workflow generation logic directly
-    const storesQuery = `SELECT DISTINCT s.store_id, s.location_id, sm.manager_id
-                         FROM stores s
-                         JOIN store_managers sm ON s.store_id = sm.store_id
-                         WHERE s.is_active = true AND sm.is_active = true`;
+    const storesQuery = `SELECT DISTINCT l.store_id, l.location_id, msl.manager_id
+                     FROM locations l
+                     JOIN manager_store_links msl ON l.store_id = msl.store_id
+                     WHERE l.is_online_now = true`;
     const stores = await pool.query(storesQuery);
     
     // Generate workflows for each store
