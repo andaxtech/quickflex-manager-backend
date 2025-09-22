@@ -1,6 +1,7 @@
 const express = require('express');
 const { startOfWeek, endOfWeek, format, parseISO } = require('date-fns');
 
+
 const { Storage } = require('@google-cloud/storage');
 const cors = require('cors');
 const { Pool } = require('pg');
@@ -15,9 +16,20 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+// Import the workflows router
+const workflowRoutes = require('./routes/workflows');
+
+// Use the routes
+app.use('/api', workflowRoutes);
+
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
 });
+
+
+// After creating pool
+const workflowRoutes = require('./routes/workflows')(pool);
+app.use('/api', workflowRoutes);
 
 
 
