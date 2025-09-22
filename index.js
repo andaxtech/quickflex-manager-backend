@@ -1995,7 +1995,9 @@ app.get('/api/workflows/:workflowId', async (req, res) => {
         t.category,
         t.frequency,
         l.city,
-        l.store_name
+        l.store_name,
+        w.store_id,
+        w.location_id
       FROM store_workflows w
       JOIN checklist_templates t ON w.template_id = t.template_id
       JOIN locations l ON w.store_id = l.store_id
