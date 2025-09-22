@@ -1951,20 +1951,33 @@ app.get('/api/workflows/:workflowId', async (req, res) => {
     
     const workflow = workflowResult.rows[0];
     
-    // Get items with completion status
+    // Get items with completion status AND action columns
     const itemsResult = await pool.query(`
       SELECT 
-        i.*,
+        i.item_id,
+        i.item_text,
+        i.item_type,
+        i.category,
         i.instructions,
         i.point_value,
         i.time_limit,
+        i.critical_violation,
+        i.fail_action,
+        i.log_waste,
+        i.take_photo,
+        i.sort_order,
         c.completion_id,
         c.completed_at,
         c.completed_by,
         c.value,
         c.notes,
         c.photo_url,
-        m.first_name || ' ' || m.last_name as completed_by_name
+        c.is_compliant,
+        m.first_name || ' ' || m.last_name as completed_by_name,
+        CASE 
+          WHEN c.completion_id IS NOT NULL THEN true 
+          ELSE false 
+        END as completed
       FROM checklist_items i
       LEFT JOIN workflow_completions c ON i.item_id = c.item_id AND c.workflow_id = $1
       LEFT JOIN managers m ON c.completed_by = m.manager_id
@@ -1972,14 +1985,162 @@ app.get('/api/workflows/:workflowId', async (req, res) => {
       ORDER BY i.sort_order, i.item_id
     `, [workflowId, workflow.template_id]);
     
+    // Transform items to match frontend expectations
+    const items = itemsResult.rows.map(item => ({
+      item_id: item.item_id,
+      item_text: item.item_text,
+      item_type: item.item_type,
+      category: item.category,
+      instructions: item.instructions,
+      point_value: item.point_value,
+      time_limit: item.time_limit,
+      critical_violation: item.critical_violation,
+      fail_action: item.fail_action,
+      log_waste: item.log_waste,
+      take_photo: item.take_photo,
+      sort_order: item.sort_order,
+      completed: item.completed,
+      value: item.value,
+      is_compliant: item.is_compliant,
+      notes: item.notes,
+      photo_url: item.photo_url,
+      completed_at: item.completed_at,
+      completed_by: item.completed_by,
+      completed_by_name: item.completed_by_name
+    }));
+    
     res.json({ 
       success: true, 
       workflow,
-      items: itemsResult.rows 
+      items 
     });
   } catch (error) {
     console.error('Error fetching workflow details:', error);
     res.status(500).json({ success: false, message: 'Failed to fetch workflow details' });
+  }
+});
+
+// Add new endpoint for logging issues
+app.post('/api/issue-logs', async (req, res) => {
+  const { workflow_id, item_id, issue_type, description, logged_by, photo_url } = req.body;
+  
+  try {
+    const result = await pool.query(
+      `INSERT INTO issue_logs 
+      (workflow_id, item_id, issue_type, description, logged_by, logged_at, photo_url)
+      VALUES ($1, $2, $3, $4, $5, NOW(), $6)
+      RETURNING *`,
+      [workflow_id, item_id, issue_type, description, logged_by, photo_url]
+    );
+    
+    res.json({ success: true, issue_log: result.rows[0] });
+  } catch (error) {
+    console.error('Error logging issue:', error);
+    res.status(500).json({ success: false, message: 'Failed to log issue' });
+  }
+});
+
+// Update the complete workflow endpoint to handle multiple completions at once
+app.post('/api/workflows/:workflowId/complete', async (req, res) => {
+  const { workflowId } = req.params;
+  const { completions, completed_by } = req.body;
+  
+  const client = await pool.connect();
+  
+  try {
+    await client.query('BEGIN');
+    
+    // Insert all completions
+    for (const completion of completions) {
+      // Check if already completed
+      const existingCheck = await client.query(
+        'SELECT completion_id FROM workflow_completions WHERE workflow_id = $1 AND item_id = $2',
+        [workflowId, completion.item_id]
+      );
+      
+      if (existingCheck.rows.length > 0) {
+        // Update existing
+        await client.query(`
+          UPDATE workflow_completions
+          SET value = $1, is_compliant = $2, notes = $3, photo_url = $4,
+              completed_by = $5, completed_at = NOW()
+          WHERE workflow_id = $6 AND item_id = $7
+        `, [
+          completion.value, 
+          completion.is_compliant, 
+          completion.notes, 
+          completion.photo_url, 
+          completed_by, 
+          workflowId, 
+          completion.item_id
+        ]);
+      } else {
+        // Insert new
+        await client.query(`
+          INSERT INTO workflow_completions (
+            workflow_id, item_id, completed_by, value, is_compliant, notes, photo_url
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7)
+        `, [
+          workflowId, 
+          completion.item_id, 
+          completed_by, 
+          completion.value, 
+          completion.is_compliant, 
+          completion.notes, 
+          completion.photo_url
+        ]);
+      }
+    }
+    
+    // Calculate compliance and update workflow
+    const complianceResult = await client.query(`
+      SELECT 
+        COUNT(DISTINCT ci.item_id) as total_items,
+        COUNT(DISTINCT wc.item_id) as completed_items,
+        COUNT(DISTINCT CASE WHEN wc.is_compliant = true THEN wc.item_id END) as compliant_items,
+        SUM(CASE WHEN wc.is_compliant = true THEN ci.point_value ELSE 0 END) as earned_points,
+        SUM(ci.point_value) as total_points
+      FROM checklist_items ci
+      LEFT JOIN workflow_completions wc ON ci.item_id = wc.item_id AND wc.workflow_id = $1
+      WHERE ci.template_id = (SELECT template_id FROM store_workflows WHERE workflow_id = $1)
+        AND ci.is_active = true
+    `, [workflowId]);
+    
+    const stats = complianceResult.rows[0];
+    const completionPercentage = (parseInt(stats.completed_items) / parseInt(stats.total_items)) * 100;
+    const compliancePercentage = parseInt(stats.total_items) > 0 
+      ? (parseInt(stats.compliant_items) / parseInt(stats.total_items)) * 100 
+      : 0;
+    
+    // Update workflow status
+    const status = completionPercentage === 100 ? 'completed' : 'in_progress';
+    
+    await client.query(`
+      UPDATE store_workflows
+      SET status = $1,
+          compliance_percentage = $2,
+          earned_points = $3,
+          total_points = $4,
+          completed_at = CASE WHEN $1 = 'completed' THEN NOW() ELSE NULL END
+      WHERE workflow_id = $5
+    `, [status, compliancePercentage, stats.earned_points || 0, stats.total_points || 0, workflowId]);
+    
+    await client.query('COMMIT');
+    
+    res.json({ 
+      success: true,
+      workflow_id: workflowId,
+      status: status,
+      compliance_percentage: compliancePercentage,
+      earned_points: stats.earned_points || 0,
+      total_points: stats.total_points || 0
+    });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error('Error completing workflow:', error);
+    res.status(500).json({ success: false, message: 'Failed to complete workflow' });
+  } finally {
+    client.release();
   }
 });
 
