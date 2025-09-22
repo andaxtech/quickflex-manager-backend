@@ -1,5 +1,5 @@
 const express = require('express');
-const { startOfWeek, endOfWeek, format, parseISO } = require('date-fns');
+
 
 
 const { Storage } = require('@google-cloud/storage');
@@ -16,18 +16,15 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Import the workflows router
-const workflowRoutes = require('./routes/workflows');
-
-// Use the routes
-app.use('/api', workflowRoutes);
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+});
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
 });
 
-
-// After creating pool
+// After creating pool, import and use workflows router
 const workflowRoutes = require('./routes/workflows')(pool);
 app.use('/api', workflowRoutes);
 
@@ -2349,6 +2346,27 @@ app.get('/api/stores/:storeId/points/today', async (req, res) => {
   }
 });
 
+const cron = require('node-cron');
+
+// Generate workflows at 4 AM daily
+cron.schedule('0 4 * * *', async () => {
+  console.log('Generating daily workflows...');
+  try {
+    // Call your workflow generation logic directly
+    const storesQuery = `SELECT DISTINCT s.store_id, s.location_id, sm.manager_id
+                         FROM stores s
+                         JOIN store_managers sm ON s.store_id = sm.store_id
+                         WHERE s.is_active = true AND sm.is_active = true`;
+    const stores = await pool.query(storesQuery);
+    
+    // Generate workflows for each store
+    for (const store of stores.rows) {
+      // Your workflow generation logic
+    }
+  } catch (error) {
+    console.error('Cron job error:', error);
+  }
+});
 
 const PORT = process.env.PORT || 5003;
 app.listen(PORT, () => {
