@@ -1883,13 +1883,53 @@ app.post('/api/stores/:storeId/workflows/generate', async (req, res) => {
       });
     }
     
-    // No workflows exist, generate them
-    const result = await pool.query(
-      'SELECT generate_manager_workflows($1, $2, $3::date) as created_count',
-      [storeId, managerId, date || 'CURRENT_DATE']
-    );
+ // No workflows exist, generate them inline
+ let createdCount = 0;
     
-    const createdCount = result.rows[0].created_count;
+ try {
+   // Get location_id for this store
+   const locationResult = await pool.query(
+     'SELECT location_id FROM locations WHERE store_id = $1',
+     [storeId]
+   );
+   
+   if (locationResult.rows.length === 0) {
+     throw new Error('Store not found');
+   }
+   
+   const locationId = locationResult.rows[0].location_id;
+   const workflowDate = date || new Date().toISOString().split('T')[0];
+   
+   // Insert morning checklist workflow
+   const insertResult = await pool.query(`
+     INSERT INTO store_workflows (
+       store_id,
+       location_id,
+       template_id,
+       date,
+       shift_type,
+       status,
+       created_by,
+       assigned_to,
+       total_points,
+       created_at,
+       start_time,
+       end_time
+     ) VALUES (
+       $1, $2, 13, $3::date, 'opening', 'pending', $4, $5, 15, NOW(),
+       $3::date + TIME '06:00:00',
+       $3::date + TIME '11:00:00'
+     ) RETURNING workflow_id`,
+     [storeId, locationId, workflowDate, managerId, managerId]
+   );
+   
+   if (insertResult.rows.length > 0) {
+     createdCount = 1;
+   }
+ } catch (insertError) {
+   console.error('Error creating workflow:', insertError);
+   throw insertError;
+ }
     
     // Get the generated workflows
     const workflows = await pool.query(`
@@ -2516,10 +2556,36 @@ cron.schedule('0 4 * * *', async () => {
                      WHERE l.is_online_now = true`;
     const stores = await pool.query(storesQuery);
     
-    // Generate workflows for each store
-    for (const store of stores.rows) {
-      // Your workflow generation logic
+// Generate workflows for each store
+for (const store of stores.rows) {
+  try {
+    // Check if workflow already exists for today
+    const existingCheck = await pool.query(
+      'SELECT COUNT(*) as count FROM store_workflows WHERE store_id = $1 AND date = CURRENT_DATE AND template_id = 13',
+      [store.store_id]
+    );
+    
+    if (existingCheck.rows[0].count === 0) {
+      // Create morning checklist workflow
+      await pool.query(`
+        INSERT INTO store_workflows (
+          store_id, location_id, template_id, date, shift_type,
+          status, created_by, assigned_to, total_points, created_at,
+          start_time, end_time
+        ) VALUES (
+          $1, $2, 13, CURRENT_DATE, 'opening', 'pending', $3, $3, 15, NOW(),
+          CURRENT_DATE + TIME '06:00:00',
+          CURRENT_DATE + TIME '11:00:00'
+        )`,
+        [store.store_id, store.location_id, store.manager_id]
+      );
+      console.log(`✅ Generated morning checklist for store ${store.store_id}`);
     }
+  } catch (err) {
+    console.error(`Failed to generate workflow for store ${store.store_id}:`, err.message);
+  }
+}
+console.log('Daily workflow generation completed');
   } catch (error) {
     console.error('Cron job error:', error);
   }
