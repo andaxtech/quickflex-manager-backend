@@ -7,15 +7,33 @@ const cors = require('cors');
 const { Pool } = require('pg');
 require('dotenv').config();
 
+// Initialize GCS with credentials from environment
+let storage;
+if (process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON) {
+  try {
+    const credentials = JSON.parse(process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON);
+    storage = new Storage({
+      projectId: process.env.GCS_PROJECT_ID,
+      credentials: credentials
+    });
+    console.log('✅ GCS initialized with credentials');
+  } catch (error) {
+    console.error('❌ Failed to parse GCS credentials:', error);
+    storage = new Storage();
+  }
+} else {
+  storage = new Storage();
+}
+
+const bucketName = process.env.GCS_BUCKET_NAME;
+const tempPhotosBucketName = process.env.GCS_TEMP_PHOTOS_BUCKET_NAME || process.env.GCS_BUCKET_NAME;
+
 const WeatherService = require('./weatherService');
 const StoreIntelligenceService = require('./storeIntelligenceService');
-
-
 
 const app = express();
 app.use(cors());
 app.use(express.json());
-
 
 // Configure multer for file uploads
 const multer = require('multer');
@@ -32,6 +50,49 @@ const upload = multer({
     }
   }
 });
+
+// Helper function to upload file to GCS
+const uploadToGCS = async (file, folder = 'temperature-photos') => {
+  if (!bucketName) {
+    throw new Error('GCS_BUCKET_NAME not configured');
+  }
+  
+  return new Promise((resolve, reject) => {
+    const fileName = `${folder}/${Date.now()}-${file.originalname.replace(/\s+/g, '-')}`;
+    const bucket = storage.bucket(tempPhotosBucketName);
+    const blob = bucket.file(fileName);
+    
+    const blobStream = blob.createWriteStream({
+      resumable: false,
+      metadata: {
+        contentType: file.mimetype,
+      },
+    });
+    
+    blobStream.on('error', (err) => {
+      console.error('GCS upload error:', err);
+      reject(err);
+    });
+    
+    blobStream.on('finish', async () => {
+      try {
+        // Make the file public
+        await blob.makePublic();
+        const publicUrl = `https://storage.googleapis.com/${folder === 'temperature-photos' ? tempPhotosBucketName : bucketName}/${fileName}`;
+        resolve(publicUrl);
+      } catch (err) {
+        // If making public fails, try to get a signed URL
+        const [signedUrl] = await blob.getSignedUrl({
+          action: 'read',
+          expires: Date.now() + 365 * 24 * 60 * 60 * 1000, // 1 year
+        });
+        resolve(signedUrl);
+      }
+    });
+    
+    blobStream.end(file.buffer);
+  });
+};
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
@@ -793,25 +854,6 @@ app.delete('/api/blocks/:blockId', async (req, res) => {
   }
 });
 
-// Initialize GCS
-let storage;
-if (process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON) {
-  try {
-    const credentials = JSON.parse(process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON);
-    storage = new Storage({
-      projectId: process.env.GCS_PROJECT_ID,
-      credentials: credentials
-    });
-    console.log('✅ GCS initialized with credentials');
-  } catch (error) {
-    console.error('❌ Failed to parse GCS credentials:', error);
-    storage = new Storage();
-  }
-} else {
-  storage = new Storage();
-}
-
-const bucketName = process.env.GCS_BUCKET_NAME;
 
 // Serve driver photos from GCS
 app.get(/^\/api\/drivers\/photo\/(.*)/, async (req, res) => {
@@ -2769,6 +2811,11 @@ app.post('/api/waste-logs', async (req, res) => {
 
 // POST /api/temperature-logs
 app.post('/api/temperature-logs', upload.single('photo'), async (req, res) => {
+  console.log('Temperature log endpoint hit');
+  console.log('Headers:', req.headers);
+  console.log('Body:', req.body);
+  console.log('File:', req.file);
+  
   const { 
     workflow_id,
     item_id,
@@ -2778,6 +2825,15 @@ app.post('/api/temperature-logs', upload.single('photo'), async (req, res) => {
     temperature, 
     logged_by 
   } = req.body;
+  
+  // Add validation
+  if (!workflow_id || !item_id || !store_id || !location_id || !temperature || !logged_by) {
+    return res.status(400).json({ 
+      success: false, 
+      message: 'Missing required fields',
+      received: { workflow_id, item_id, store_id, location_id, equipment_type, temperature, logged_by }
+    });
+  }
   
   try {
     // Check if temperature is compliant
@@ -2807,21 +2863,20 @@ app.post('/api/temperature-logs', upload.single('photo'), async (req, res) => {
     const log_id = logResult.rows[0].log_id;
     let photo_urls = logResult.rows[0].photo_urls || [];
     
-    // If photo was uploaded, add to array
-    if (req.file) {
-      const photoUrl = req.file.location || req.file.path; // Depending on your upload setup
-      photo_urls.push({
-        url: photoUrl,
-        uploaded_at: new Date().toISOString(),
-        uploaded_by: parseInt(logged_by)
-      });
-      
-      // Update the photo_urls array
-      await pool.query(
-        'UPDATE temperature_logs SET photo_urls = $1::jsonb WHERE log_id = $2',
-        [JSON.stringify(photo_urls), log_id]
-      );
-    }
+    // If photo was uploaded, upload to GCS and add to array
+if (req.file) {
+  try {
+    const photoUrl = await uploadToGCS(req.file);
+    photo_urls.push({
+      url: photoUrl,
+      uploaded_at: new Date().toISOString(),
+      uploaded_by: parseInt(logged_by)
+    });
+  } catch (uploadError) {
+    console.error('Error uploading to GCS:', uploadError);
+    throw new Error('Failed to upload photo to cloud storage');
+  }
+}
     
     // Update the workflow completion with temperature_log_id
     await pool.query(`
@@ -2838,7 +2893,12 @@ app.post('/api/temperature-logs', upload.single('photo'), async (req, res) => {
     });
   } catch (error) {
     console.error('Error logging temperature:', error);
-    res.status(500).json({ success: false, message: 'Failed to log temperature' });
+    console.error('Stack trace:', error.stack);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Failed to log temperature',
+      error: error.message 
+    });
   }
 });
 
