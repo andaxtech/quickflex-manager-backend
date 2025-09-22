@@ -2016,7 +2016,7 @@ const itemsResult = await pool.query(`
     c.completed_by,
     c.value,
     c.notes,
-    c.photo_url,
+    null as photo_url,
     c.is_compliant,
     m.first_name || ' ' || m.last_name as completed_by_name,
     CASE 
@@ -2054,7 +2054,7 @@ const items = itemsResult.rows.map(item => ({
   value: item.value,
   is_compliant: item.is_compliant,
   notes: item.notes,
-  photo_url: item.photo_url,
+  photo_url: null,
   completed_at: item.completed_at,
   completed_by: item.completed_by,
   completed_by_name: item.completed_by_name
@@ -2073,16 +2073,16 @@ const items = itemsResult.rows.map(item => ({
 
 // Add new endpoint for logging issues
 app.post('/api/issue-logs', async (req, res) => {
-  const { workflow_id, item_id, issue_type, description, logged_by, photo_url } = req.body;
-  
-  try {
-    const result = await pool.query(
-      `INSERT INTO issue_logs 
-      (workflow_id, item_id, issue_type, description, logged_by, logged_at, photo_url)
-      VALUES ($1, $2, $3, $4, $5, NOW(), $6)
-      RETURNING *`,
-      [workflow_id, item_id, issue_type, description, logged_by, photo_url]
-    );
+  const { workflow_id, item_id, issue_type, description, logged_by } = req.body;
+
+try {
+  const result = await pool.query(
+    `INSERT INTO issue_logs 
+    (workflow_id, item_id, issue_type, description, logged_by, logged_at)
+    VALUES ($1, $2, $3, $4, $5, NOW())
+    RETURNING *`,
+    [workflow_id, item_id, issue_type, description, logged_by]
+  );
     
     res.json({ success: true, issue_log: result.rows[0] });
   } catch (error) {
@@ -2113,24 +2113,23 @@ app.post('/api/workflows/:workflowId/complete', async (req, res) => {
         // Update existing
         await client.query(`
           UPDATE workflow_completions
-          SET value = $1, is_compliant = $2, notes = $3, photo_url = $4,
-              completed_by = $5, completed_at = NOW()
-          WHERE workflow_id = $6 AND item_id = $7
-        `, [
-          completion.value, 
-          completion.is_compliant, 
-          completion.notes, 
-          completion.photo_url, 
-          completed_by, 
-          workflowId, 
-          completion.item_id
-        ]);
+          SET value = $1, is_compliant = $2, notes = $3,
+              completed_by = $4, completed_at = NOW()
+                WHERE workflow_id = $5 AND item_id = $6
+                `, [
+                  completion.value, 
+                  completion.is_compliant, 
+                  completion.notes, 
+                  completed_by, 
+                  workflowId, 
+                  completion.item_id
+                ]);
       } else {
         // Insert new
         await client.query(`
           INSERT INTO workflow_completions (
-            workflow_id, item_id, completed_by, value, is_compliant, notes, photo_url
-          ) VALUES ($1, $2, $3, $4, $5, $6, $7)
+  workflow_id, item_id, completed_by, value, is_compliant, notes
+) VALUES ($1, $2, $3, $4, $5, $6)
         `, [
           workflowId, 
           completion.item_id, 
@@ -2138,7 +2137,6 @@ app.post('/api/workflows/:workflowId/complete', async (req, res) => {
           completion.value, 
           completion.is_compliant, 
           completion.notes, 
-          completion.photo_url
         ]);
       }
     }
@@ -2198,7 +2196,7 @@ app.post('/api/workflows/:workflowId/complete', async (req, res) => {
 // Complete a checklist item
 app.post('/api/workflows/:workflowId/items/:itemId/complete', async (req, res) => {
   const { workflowId, itemId } = req.params;
-  const { managerId, value, notes, photoUrl } = req.body;
+  const { managerId, value, notes } = req.body;
   
   const client = await pool.connect();
   
@@ -2234,17 +2232,17 @@ app.post('/api/workflows/:workflowId/items/:itemId/complete', async (req, res) =
       // Update existing completion
       await client.query(`
         UPDATE workflow_completions
-        SET value = $1, is_compliant = $2, notes = $3, photo_url = $4,
-            completed_by = $5, completed_at = NOW()
-        WHERE workflow_id = $6 AND item_id = $7
-      `, [value, isCompliant, notes, photoUrl, managerId, workflowId, itemId]);
+        SET value = $1, is_compliant = $2, notes = $3,
+    completed_by = $4, completed_at = NOW()
+WHERE workflow_id = $5 AND item_id = $6
+`, [value, isCompliant, notes, managerId, workflowId, itemId]);
     } else {
       // Insert new completion
       await client.query(`
         INSERT INTO workflow_completions (
-          workflow_id, item_id, completed_by, value, is_compliant, notes, photo_url
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7)
-      `, [workflowId, itemId, managerId, value, isCompliant, notes, photoUrl]);
+  workflow_id, item_id, completed_by, value, is_compliant, notes
+) VALUES ($1, $2, $3, $4, $5, $6)
+`, [workflowId, itemId, managerId, value, isCompliant, notes]);
     }
     
     // Check if ALL items are completed
@@ -2306,21 +2304,41 @@ app.post('/api/workflows/:workflowId/items/:itemId/complete', async (req, res) =
     }
     
     // Log temperature if applicable
-    if (item.item_type === 'temperature') {
-      const workflowInfo = await client.query(`
-        SELECT store_id, location_id FROM store_workflows WHERE workflow_id = $1
-      `, [workflowId]);
-      
-      const { store_id, location_id } = workflowInfo.rows[0];
-      
-      await client.query(`
-        INSERT INTO temperature_logs (
-          store_id, location_id, equipment_type, temperature, 
-          is_compliant, logged_by, workflow_id, notes
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-      `, [store_id, location_id, item.category, parseFloat(value), 
-          isCompliant, managerId, workflowId, notes]);
-    }
+if (item.item_type === 'temperature') {
+  const workflowInfo = await client.query(`
+    SELECT store_id, location_id FROM store_workflows WHERE workflow_id = $1
+  `, [workflowId]);
+  
+  const { store_id, location_id } = workflowInfo.rows[0];
+  
+  // Extract equipment type from item text (e.g., "walk-in cooler" from "Is walk-in cooler between 33°F-38°F?")
+  const equipment_type = item.item_text.toLowerCase().includes('walk-in') ? 'walk_in_cooler' :
+                        item.item_text.toLowerCase().includes('makeline') ? 'makeline_cooler' :
+                        item.item_text.toLowerCase().includes('beverage') ? 'beverage_cooler' :
+                        item.category;
+  
+  const tempLogResult = await client.query(`
+    INSERT INTO temperature_logs (
+      store_id, location_id, workflow_id, item_id, equipment_type, 
+      temperature, unit, is_compliant, logged_by, notes, photo_urls
+    ) VALUES ($1, $2, $3, $4, $5, $6, 'F', $7, $8, $9, '[]'::jsonb)
+    ON CONFLICT (workflow_id, item_id) 
+    DO UPDATE SET 
+      temperature = EXCLUDED.temperature,
+      is_compliant = EXCLUDED.is_compliant,
+      notes = EXCLUDED.notes,
+      logged_at = CURRENT_TIMESTAMP
+    RETURNING log_id
+  `, [store_id, location_id, workflowId, itemId, equipment_type, 
+      parseFloat(value), isCompliant, managerId, notes]);
+  
+  // Link to workflow completion
+  const temp_log_id = tempLogResult.rows[0].log_id;
+  await client.query(
+    'UPDATE workflow_completions SET temperature_log_id = $1 WHERE workflow_id = $2 AND item_id = $3',
+    [temp_log_id, workflowId, itemId]
+  );
+}
     
     // Check for critical violations
     if (item.critical_violation && !isCompliant) {
@@ -2612,6 +2630,134 @@ app.post('/api/waste-logs', async (req, res) => {
     res.status(500).json({ success: false, message: 'Failed to log waste' });
   }
 });
+
+
+
+// POST /api/temperature-logs
+app.post('/api/temperature-logs', upload.single('photo'), async (req, res) => {
+  const { 
+    workflow_id,
+    item_id,
+    store_id,
+    location_id,
+    equipment_type, 
+    temperature, 
+    logged_by 
+  } = req.body;
+  
+  try {
+    // Check if temperature is compliant
+    const itemResult = await pool.query(
+      'SELECT min_value, max_value FROM checklist_items WHERE item_id = $1',
+      [item_id]
+    );
+    
+    const item = itemResult.rows[0];
+    const temp = parseFloat(temperature);
+    const is_compliant = temp >= item.min_value && temp <= item.max_value;
+    
+    // Create or update temperature log
+    const logResult = await pool.query(`
+      INSERT INTO temperature_logs 
+      (store_id, location_id, workflow_id, item_id, equipment_type, temperature, unit, is_compliant, logged_by, photo_urls)
+      VALUES ($1, $2, $3, $4, $5, $6, 'F', $7, $8, '[]'::jsonb)
+      ON CONFLICT (workflow_id, item_id) 
+      DO UPDATE SET 
+        temperature = EXCLUDED.temperature,
+        is_compliant = EXCLUDED.is_compliant,
+        logged_at = CURRENT_TIMESTAMP,
+        photo_urls = temperature_logs.photo_urls
+      RETURNING log_id, photo_urls
+    `, [store_id, location_id, workflow_id, item_id, equipment_type, temperature, is_compliant, logged_by]);
+    
+    const log_id = logResult.rows[0].log_id;
+    let photo_urls = logResult.rows[0].photo_urls || [];
+    
+    // If photo was uploaded, add to array
+    if (req.file) {
+      const photoUrl = req.file.location || req.file.path; // Depending on your upload setup
+      photo_urls.push({
+        url: photoUrl,
+        uploaded_at: new Date().toISOString(),
+        uploaded_by: parseInt(logged_by)
+      });
+      
+      // Update the photo_urls array
+      await pool.query(
+        'UPDATE temperature_logs SET photo_urls = $1::jsonb WHERE log_id = $2',
+        [JSON.stringify(photo_urls), log_id]
+      );
+    }
+    
+    // Update the workflow completion with temperature_log_id
+    await pool.query(`
+      UPDATE workflow_completions 
+      SET temperature_log_id = $1 
+      WHERE workflow_id = $2 AND item_id = $3
+    `, [log_id, workflow_id, item_id]);
+    
+    res.json({
+      success: true,
+      log_id,
+      is_compliant,
+      photo_urls
+    });
+  } catch (error) {
+    console.error('Error logging temperature:', error);
+    res.status(500).json({ success: false, message: 'Failed to log temperature' });
+  }
+});
+
+// POST /api/temperature-logs/:logId/photos - Add additional photos to existing log
+app.post('/api/temperature-logs/:logId/photos', upload.single('photo'), async (req, res) => {
+  const { logId } = req.params;
+  const { uploaded_by } = req.body;
+  
+  try {
+    // Get current photos
+    const result = await pool.query(
+      'SELECT photo_urls FROM temperature_logs WHERE log_id = $1',
+      [logId]
+    );
+    
+    if (result.rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'Temperature log not found' });
+    }
+    
+    let photo_urls = result.rows[0].photo_urls || [];
+    
+    // Upload and add new photo
+    if (req.file) {
+      const photoUrl = req.file.location || req.file.path;
+      photo_urls.push({
+        url: photoUrl,
+        uploaded_at: new Date().toISOString(),
+        uploaded_by: parseInt(uploaded_by)
+      });
+      
+      // Update the array
+      await pool.query(
+        'UPDATE temperature_logs SET photo_urls = $1::jsonb WHERE log_id = $2',
+        [JSON.stringify(photo_urls), logId]
+      );
+      
+      res.json({
+        success: true,
+        photo_urls
+      });
+    } else {
+      res.status(400).json({ success: false, message: 'No photo provided' });
+    }
+  } catch (error) {
+    console.error('Error adding photo:', error);
+    res.status(500).json({ success: false, message: 'Failed to add photo' });
+  }
+});
+
+
+
+
+
 
 // Generate workflows at 4 AM daily
 cron.schedule('0 4 * * *', async () => {
