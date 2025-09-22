@@ -1992,62 +1992,72 @@ app.get('/api/workflows/:workflowId', async (req, res) => {
     const workflow = workflowResult.rows[0];
     
     // Get items with completion status AND action columns
-    const itemsResult = await pool.query(`
-      SELECT 
-        i.item_id,
-        i.item_text,
-        i.item_type,
-        i.category,
-        i.instructions,
-        i.point_value,
-        i.time_limit,
-        i.critical_violation,
-        i.fail_action,
-        i.log_waste,
-        i.take_photo,
-        i.sort_order,
-        c.completion_id,
-        c.completed_at,
-        c.completed_by,
-        c.value,
-        c.notes,
-        c.photo_url,
-        c.is_compliant,
-        m.first_name || ' ' || m.last_name as completed_by_name,
-        CASE 
-          WHEN c.completion_id IS NOT NULL THEN true 
-          ELSE false 
-        END as completed
-      FROM checklist_items i
-      LEFT JOIN workflow_completions c ON i.item_id = c.item_id AND c.workflow_id = $1
-      LEFT JOIN managers m ON c.completed_by = m.manager_id
-      WHERE i.template_id = $2 AND i.is_active = true
-      ORDER BY i.sort_order, i.item_id
-    `, [workflowId, workflow.template_id]);
+const itemsResult = await pool.query(`
+  SELECT 
+    i.item_id,
+    i.item_text,
+    i.item_type,
+    i.category,
+    i.instructions,
+    i.point_value,
+    i.time_limit,
+    i.critical_violation,
+    i.action_if_yes,
+    i.action_if_no,
+    i.action_trigger,
+    i.action_buttons,
+    i.log_waste,
+    i.take_photo,
+    i.sort_order,
+    i.min_value,
+    i.max_value,
+    c.completion_id,
+    c.completed_at,
+    c.completed_by,
+    c.value,
+    c.notes,
+    c.photo_url,
+    c.is_compliant,
+    m.first_name || ' ' || m.last_name as completed_by_name,
+    CASE 
+      WHEN c.completion_id IS NOT NULL THEN true 
+      ELSE false 
+    END as completed
+  FROM checklist_items i
+  LEFT JOIN workflow_completions c ON i.item_id = c.item_id AND c.workflow_id = $1
+  LEFT JOIN managers m ON c.completed_by = m.manager_id
+  WHERE i.template_id = $2 AND i.is_active = true
+  ORDER BY i.sort_order, i.item_id
+`, [workflowId, workflow.template_id]);
     
     // Transform items to match frontend expectations
-    const items = itemsResult.rows.map(item => ({
-      item_id: item.item_id,
-      item_text: item.item_text,
-      item_type: item.item_type,
-      category: item.category,
-      instructions: item.instructions,
-      point_value: item.point_value,
-      time_limit: item.time_limit,
-      critical_violation: item.critical_violation,
-      fail_action: item.fail_action,
-      log_waste: item.log_waste,
-      take_photo: item.take_photo,
-      sort_order: item.sort_order,
-      completed: item.completed,
-      value: item.value,
-      is_compliant: item.is_compliant,
-      notes: item.notes,
-      photo_url: item.photo_url,
-      completed_at: item.completed_at,
-      completed_by: item.completed_by,
-      completed_by_name: item.completed_by_name
-    }));
+const items = itemsResult.rows.map(item => ({
+  item_id: item.item_id,
+  item_text: item.item_text,
+  item_type: item.item_type,
+  category: item.category,
+  instructions: item.instructions,
+  point_value: item.point_value,
+  time_limit: item.time_limit,
+  critical_violation: item.critical_violation,
+  action_if_yes: item.action_if_yes,
+  action_if_no: item.action_if_no,
+  action_trigger: item.action_trigger,
+  action_buttons: item.action_buttons,
+  log_waste: item.log_waste,
+  take_photo: item.take_photo,
+  sort_order: item.sort_order,
+  min_value: item.min_value,
+  max_value: item.max_value,
+  completed: item.completed,
+  value: item.value,
+  is_compliant: item.is_compliant,
+  notes: item.notes,
+  photo_url: item.photo_url,
+  completed_at: item.completed_at,
+  completed_by: item.completed_by,
+  completed_by_name: item.completed_by_name
+}));
     
     res.json({ 
       success: true, 
@@ -2544,6 +2554,27 @@ app.get('/api/stores/:storeId/points/today', async (req, res) => {
 });
 
 const cron = require('node-cron');
+
+
+// Log waste items
+app.post('/api/waste-logs', async (req, res) => {
+  const { workflow_id, item_id, manager_id, item_name, amount, amount_unit, reason, image_url } = req.body;
+  
+  try {
+    const result = await pool.query(
+      `INSERT INTO waste_logs 
+      (workflow_id, item_id, manager_id, item_name, amount, amount_unit, reason, image_url)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+      RETURNING *`,
+      [workflow_id, item_id, manager_id, item_name, amount, amount_unit, reason, image_url]
+    );
+    
+    res.json({ success: true, waste_log: result.rows[0] });
+  } catch (error) {
+    console.error('Error logging waste:', error);
+    res.status(500).json({ success: false, message: 'Failed to log waste' });
+  }
+});
 
 // Generate workflows at 4 AM daily
 cron.schedule('0 4 * * *', async () => {
