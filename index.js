@@ -2810,6 +2810,7 @@ app.post('/api/waste-logs', async (req, res) => {
 
 
 // POST /api/temperature-logs
+// POST /api/temperature-logs
 app.post('/api/temperature-logs', upload.single('photo'), async (req, res) => {
   console.log('Temperature log endpoint hit');
   console.log('Headers:', req.headers);
@@ -2846,66 +2847,71 @@ app.post('/api/temperature-logs', upload.single('photo'), async (req, res) => {
     const temp = parseFloat(temperature);
     const is_compliant = temp >= item.min_value && temp <= item.max_value;
     
-    // Create or update temperature log
-    // First check if a log already exists
-const existingLog = await pool.query(
-  'SELECT log_id, photo_urls FROM temperature_logs WHERE workflow_id = $1 AND item_id = $2',
-  [workflow_id, item_id]
-);
+    // Check if a log already exists
+    const existingLog = await pool.query(
+      'SELECT log_id, photo_urls FROM temperature_logs WHERE workflow_id = $1 AND item_id = $2',
+      [workflow_id, item_id]
+    );
 
-let log_id;
-let photo_urls = [];
+    let logId;
+    let photo_urls = [];
 
-if (existingLog.rows.length > 0) {
-  // Update existing log
-  log_id = existingLog.rows[0].log_id;
-  photo_urls = existingLog.rows[0].photo_urls || [];
-  
-  await pool.query(`
-    UPDATE temperature_logs 
-    SET temperature = $1, is_compliant = $2, logged_at = CURRENT_TIMESTAMP
-    WHERE log_id = $3
-  `, [temperature, is_compliant, log_id]);
-} else {
-  // Insert new log
-  const insertResult = await pool.query(`
-    INSERT INTO temperature_logs 
-    (store_id, location_id, workflow_id, item_id, equipment_type, temperature, unit, is_compliant, logged_by, photo_urls)
-    VALUES ($1, $2, $3, $4, $5, $6, 'F', $7, $8, '[]'::jsonb)
-    RETURNING log_id
-  `, [store_id, location_id, workflow_id, item_id, equipment_type, temperature, is_compliant, logged_by]);
-  
-  log_id = insertResult.rows[0].log_id;
-}
-    
-    const log_id = logResult.rows[0].log_id;
-    let photo_urls = logResult.rows[0].photo_urls || [];
+    if (existingLog.rows.length > 0) {
+      // Update existing log
+      logId = existingLog.rows[0].log_id;
+      photo_urls = existingLog.rows[0].photo_urls || [];
+      
+      await pool.query(`
+        UPDATE temperature_logs 
+        SET temperature = $1, is_compliant = $2, logged_at = CURRENT_TIMESTAMP
+        WHERE log_id = $3
+      `, [temperature, is_compliant, logId]);
+    } else {
+      // Insert new log
+      const insertResult = await pool.query(`
+        INSERT INTO temperature_logs 
+        (store_id, location_id, workflow_id, item_id, equipment_type, temperature, unit, is_compliant, logged_by, photo_urls)
+        VALUES ($1, $2, $3, $4, $5, $6, 'F', $7, $8, '[]'::jsonb)
+        RETURNING log_id
+      `, [store_id, location_id, workflow_id, item_id, equipment_type, temperature, is_compliant, logged_by]);
+      
+      logId = insertResult.rows[0].log_id;
+    }
     
     // If photo was uploaded, upload to GCS and add to array
-if (req.file) {
-  try {
-    const photoUrl = await uploadToGCS(req.file);
-    photo_urls.push({
-      url: photoUrl,
-      uploaded_at: new Date().toISOString(),
-      uploaded_by: parseInt(logged_by)
-    });
-  } catch (uploadError) {
-    console.error('Error uploading to GCS:', uploadError);
-    throw new Error('Failed to upload photo to cloud storage');
-  }
-}
+    if (req.file) {
+      try {
+        console.log('Uploading file to GCS:', req.file.originalname);
+        const photoUrl = await uploadToGCS(req.file);
+        console.log('File uploaded successfully:', photoUrl);
+        
+        photo_urls.push({
+          url: photoUrl,
+          uploaded_at: new Date().toISOString(),
+          uploaded_by: parseInt(logged_by)
+        });
+        
+        // Update the photo_urls array
+        await pool.query(
+          'UPDATE temperature_logs SET photo_urls = $1::jsonb WHERE log_id = $2',
+          [JSON.stringify(photo_urls), logId]
+        );
+      } catch (uploadError) {
+        console.error('Error uploading to GCS:', uploadError);
+        throw new Error('Failed to upload photo to cloud storage');
+      }
+    }
     
     // Update the workflow completion with temperature_log_id
     await pool.query(`
       UPDATE workflow_completions 
       SET temperature_log_id = $1 
       WHERE workflow_id = $2 AND item_id = $3
-    `, [log_id, workflow_id, item_id]);
+    `, [logId, workflow_id, item_id]);
     
     res.json({
       success: true,
-      log_id,
+      log_id: logId,
       is_compliant,
       photo_urls
     });
