@@ -20,10 +20,6 @@ const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
 });
 
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-});
-
 // After creating pool, import and use workflows router
 const workflowRoutes = require('./routes/workflows')(pool);
 app.use('/api', workflowRoutes);
