@@ -2847,18 +2847,36 @@ app.post('/api/temperature-logs', upload.single('photo'), async (req, res) => {
     const is_compliant = temp >= item.min_value && temp <= item.max_value;
     
     // Create or update temperature log
-    const logResult = await pool.query(`
-      INSERT INTO temperature_logs 
-      (store_id, location_id, workflow_id, item_id, equipment_type, temperature, unit, is_compliant, logged_by, photo_urls)
-      VALUES ($1, $2, $3, $4, $5, $6, 'F', $7, $8, '[]'::jsonb)
-      ON CONFLICT (workflow_id, item_id) 
-      DO UPDATE SET 
-        temperature = EXCLUDED.temperature,
-        is_compliant = EXCLUDED.is_compliant,
-        logged_at = CURRENT_TIMESTAMP,
-        photo_urls = temperature_logs.photo_urls
-      RETURNING log_id, photo_urls
-    `, [store_id, location_id, workflow_id, item_id, equipment_type, temperature, is_compliant, logged_by]);
+    // First check if a log already exists
+const existingLog = await pool.query(
+  'SELECT log_id, photo_urls FROM temperature_logs WHERE workflow_id = $1 AND item_id = $2',
+  [workflow_id, item_id]
+);
+
+let log_id;
+let photo_urls = [];
+
+if (existingLog.rows.length > 0) {
+  // Update existing log
+  log_id = existingLog.rows[0].log_id;
+  photo_urls = existingLog.rows[0].photo_urls || [];
+  
+  await pool.query(`
+    UPDATE temperature_logs 
+    SET temperature = $1, is_compliant = $2, logged_at = CURRENT_TIMESTAMP
+    WHERE log_id = $3
+  `, [temperature, is_compliant, log_id]);
+} else {
+  // Insert new log
+  const insertResult = await pool.query(`
+    INSERT INTO temperature_logs 
+    (store_id, location_id, workflow_id, item_id, equipment_type, temperature, unit, is_compliant, logged_by, photo_urls)
+    VALUES ($1, $2, $3, $4, $5, $6, 'F', $7, $8, '[]'::jsonb)
+    RETURNING log_id
+  `, [store_id, location_id, workflow_id, item_id, equipment_type, temperature, is_compliant, logged_by]);
+  
+  log_id = insertResult.rows[0].log_id;
+}
     
     const log_id = logResult.rows[0].log_id;
     let photo_urls = logResult.rows[0].photo_urls || [];
