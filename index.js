@@ -2049,6 +2049,7 @@ const items = itemsResult.rows.map(item => ({
   sort_order: item.sort_order,
   min_value: item.min_value,
   max_value: item.max_value,
+  completion_id: item.completion_id,  // ADD THIS LINE
   completed: item.completed,
   value: item.value,
   is_compliant: item.is_compliant,
