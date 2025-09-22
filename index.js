@@ -16,6 +16,23 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+
+// Configure multer for file uploads
+const multer = require('multer');
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: 10 * 1024 * 1024, // 10MB limit
+  },
+  fileFilter: (req, file, cb) => {
+    if (file.mimetype.startsWith('image/')) {
+      cb(null, true);
+    } else {
+      cb(new Error('Only image files are allowed'));
+    }
+  }
+});
+
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
 });
