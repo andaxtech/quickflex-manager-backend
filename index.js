@@ -2369,29 +2369,56 @@ if (item.item_type === 'temperature') {
 }
     
     // Check for critical violations
-    if (item.critical_violation && !isCompliant) {
-      const workflowInfo = await client.query(`
-        SELECT store_id, location_id FROM store_workflows WHERE workflow_id = $1
-      `, [workflowId]);
-      
-      const { store_id, location_id } = workflowInfo.rows[0];
-      
-      await client.query(`
-        INSERT INTO critical_violations (
-          store_id, location_id, violation_type, description,
-          severity, points_deducted, discovered_by, workflow_id
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-      `, [
-        store_id, 
-        location_id, 
-        item.category, 
-        `${item.item_text} - Value: ${value}`,
-        'high',
-        10,
-        managerId,
-        workflowId
-      ]);
-    }
+    // Log temperature issues to manager_store_issue_logs
+if (item.item_type === 'temperature' && !isCompliant) {
+  const issueType = temp < minValue ? 'temperature_low' : 'temperature_high';
+  const actionTaken = item.action_if_no || 'Temperature out of range - action required';
+  
+  await client.query(`
+    INSERT INTO manager_store_issue_logs (
+      workflow_id,
+      item_id,
+      issue_type,
+      issue_value,
+      action_taken,
+      logged_by,
+      logged_at,
+      resolved
+    ) VALUES ($1, $2, $3, $4, $5, $6, NOW(), false)
+  `, [
+    workflowId,
+    itemId,
+    issueType,
+    value,
+    actionTaken,
+    managerId
+  ]);
+}
+
+// Still log critical violations if needed
+if (item.critical_violation && !isCompliant) {
+  const workflowInfo = await client.query(`
+    SELECT store_id, location_id FROM store_workflows WHERE workflow_id = $1
+  `, [workflowId]);
+  
+  const { store_id, location_id } = workflowInfo.rows[0];
+  
+  await client.query(`
+    INSERT INTO critical_violations (
+      store_id, location_id, violation_type, description,
+      severity, points_deducted, discovered_by, workflow_id
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+  `, [
+    store_id, 
+    location_id, 
+    item.category, 
+    `${item.item_text} - Value: ${value}`,
+    'high',
+    10,
+    managerId,
+    workflowId
+  ]);
+}
     
     await client.query('COMMIT');
     
@@ -2424,6 +2451,85 @@ if (item.item_type === 'temperature') {
     client.release();
   }
 });
+
+
+// Get issue logs for a workflow or store
+app.get('/api/manager-store-issue-logs', async (req, res) => {
+  const { workflow_id, store_id, resolved } = req.query;
+  
+  try {
+    let query = `
+      SELECT 
+        il.*,
+        ci.item_text,
+        ci.category,
+        m.first_name || ' ' || m.last_name as logged_by_name
+      FROM manager_store_issue_logs il
+      JOIN checklist_items ci ON il.item_id = ci.item_id
+      LEFT JOIN managers m ON il.logged_by = m.manager_id
+      WHERE 1=1
+    `;
+    
+    const params = [];
+    let paramIndex = 1;
+    
+    if (workflow_id) {
+      query += ` AND il.workflow_id = $${paramIndex}`;
+      params.push(workflow_id);
+      paramIndex++;
+    }
+    
+    if (store_id) {
+      query += ` AND il.workflow_id IN (SELECT workflow_id FROM store_workflows WHERE store_id = $${paramIndex})`;
+      params.push(store_id);
+      paramIndex++;
+    }
+    
+    if (resolved !== undefined) {
+      query += ` AND il.resolved = $${paramIndex}`;
+      params.push(resolved === 'true');
+    }
+    
+    query += ' ORDER BY il.logged_at DESC';
+    
+    const result = await pool.query(query, params);
+    
+    res.json({ success: true, issues: result.rows });
+  } catch (error) {
+    console.error('Error fetching issue logs:', error);
+    res.status(500).json({ success: false, message: 'Failed to fetch issue logs' });
+  }
+});
+
+// Mark issue as resolved
+app.put('/api/manager-store-issue-logs/:logId/resolve', async (req, res) => {
+  const { logId } = req.params;
+  const { resolved_by, resolution_notes } = req.body;
+  
+  try {
+    const result = await pool.query(`
+      UPDATE manager_store_issue_logs
+      SET 
+        resolved = true,
+        resolved_at = NOW(),
+        action_taken = action_taken || E'\n\nResolution: ' || $2
+      WHERE log_id = $1
+      RETURNING *
+    `, [logId, resolution_notes || 'Resolved']);
+    
+    if (result.rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'Issue log not found' });
+    }
+    
+    res.json({ success: true, issue: result.rows[0] });
+  } catch (error) {
+    console.error('Error resolving issue:', error);
+    res.status(500).json({ success: false, message: 'Failed to resolve issue' });
+  }
+});
+
+
+
 
 // Debug endpoint - REMOVE AFTER TESTING
 app.get('/api/debug/workflow/:workflowId', async (req, res) => {
