@@ -2378,6 +2378,42 @@ app.post('/api/workflows/:workflowId/items/:itemId/complete', async (req, res) =
   }
 });
 
+// Debug endpoint - REMOVE AFTER TESTING
+app.get('/api/debug/workflow/:workflowId', async (req, res) => {
+  const { workflowId } = req.params;
+  
+  try {
+    const itemsResult = await pool.query(`
+      SELECT 
+        item_id,
+        item_text,
+        action_if_yes,
+        action_if_no,
+        action_trigger,
+        action_buttons
+      FROM checklist_items i
+      WHERE i.template_id = (
+        SELECT template_id FROM store_workflows WHERE workflow_id = $1
+      )
+      AND i.item_id = 31
+      LIMIT 1
+    `, [workflowId]);
+    
+    res.json({ 
+      success: true, 
+      item: itemsResult.rows[0],
+      hasActionFields: {
+        action_if_yes: itemsResult.rows[0]?.action_if_yes !== null,
+        action_if_no: itemsResult.rows[0]?.action_if_no !== null,
+        action_trigger: itemsResult.rows[0]?.action_trigger !== null,
+        action_buttons: itemsResult.rows[0]?.action_buttons !== null
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 // Get temperature logs for a store
 app.get('/api/stores/:storeId/temperatures', async (req, res) => {
   const { storeId } = req.params;
