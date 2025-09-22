@@ -2232,13 +2232,22 @@ app.post('/api/workflows/:workflowId/items/:itemId/complete', async (req, res) =
     const item = itemResult.rows[0];
     
     // Validate value based on item type
-    let isCompliant = true;
-    if (item.item_type === 'temperature') {
-      const numValue = parseFloat(value);
-      if (item.min_value && numValue < item.min_value) isCompliant = false;
-      if (item.max_value && numValue > item.max_value) isCompliant = false;
-    }
-    
+let isCompliant = true;
+if (item.item_type === 'temperature') {
+  const numValue = parseFloat(value);
+  const minValue = parseFloat(item.min_value);
+  const maxValue = parseFloat(item.max_value);
+  
+  if (!isNaN(minValue) && numValue < minValue) isCompliant = false;
+  if (!isNaN(maxValue) && numValue > maxValue) isCompliant = false;
+  
+  console.log('Temperature validation:', {
+    value: numValue,
+    min: minValue,
+    max: maxValue,
+    isCompliant: isCompliant
+  });
+}
     // Check if already completed
     const existingCompletion = await client.query(`
       SELECT completion_id FROM workflow_completions
