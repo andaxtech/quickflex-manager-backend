@@ -2560,6 +2560,58 @@ app.get('/api/manager-store-issue-logs', async (req, res) => {
   }
 });
 
+// Create new issue log
+app.post('/api/manager-store-issue-logs', async (req, res) => {
+  const { 
+    workflow_id, 
+    item_id, 
+    issue_type, 
+    issue_value, 
+    action_taken, 
+    logged_by,
+    quantity_affected,
+    photo_url 
+  } = req.body;
+  
+  try {
+    const result = await pool.query(`
+      INSERT INTO manager_store_issue_logs (
+        workflow_id,
+        item_id,
+        issue_type,
+        issue_value,
+        action_taken,
+        logged_by,
+        logged_at,
+        resolved,
+        quantity_affected,
+        photo_url
+      ) VALUES ($1, $2, $3, $4, $5, $6, NOW(), false, $7, $8)
+      RETURNING *
+    `, [
+      workflow_id,
+      item_id,
+      issue_type,
+      issue_value,
+      action_taken,
+      logged_by,
+      quantity_affected || null,
+      photo_url || null
+    ]);
+    
+    res.json({ 
+      success: true, 
+      issue: result.rows[0] 
+    });
+  } catch (error) {
+    console.error('Error creating issue log:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Failed to create issue log' 
+    });
+  }
+});
+
 // Mark issue as resolved
 app.put('/api/manager-store-issue-logs/:logId/resolve', async (req, res) => {
   const { logId } = req.params;
