@@ -2426,8 +2426,8 @@ await client.query(
     
     // Check for critical violations
     // Log temperature issues to manager_store_issue_logs
-if (item.item_type === 'temperature' && !isCompliant) {
-  const issueType = temp < minValue ? 'temperature_low' : 'temperature_high';
+    if (item.item_type === 'temperature' && !isCompliant) {
+      const issueType = value < minValue ? 'temperature_low' : 'temperature_high';
   const actionTaken = item.action_if_no || 'Temperature out of range - action required';
   
   await client.query(`
