@@ -2512,7 +2512,106 @@ if (item.critical_violation && !isCompliant) {
 });
 
 
-// Get issue logs for a workflow or store
+// Create new issue log with auto-generated service ticket ID
+app.post('/api/manager-store-issue-logs', async (req, res) => {
+  const { 
+    workflow_id, 
+    item_id, 
+    issue_type, 
+    issue_value, 
+    action_taken, 
+    logged_by,
+    photo_url 
+  } = req.body;
+  
+  const client = await pool.connect();
+  
+  try {
+    await client.query('BEGIN');
+    
+    // Get store_id and location_id from workflow
+    const workflowResult = await client.query(
+      'SELECT store_id, location_id FROM store_workflows WHERE workflow_id = $1',
+      [workflow_id]
+    );
+    
+    if (workflowResult.rows.length === 0) {
+      throw new Error('Workflow not found');
+    }
+    
+    const { store_id, location_id } = workflowResult.rows[0];
+    
+    // Get equipment name from item
+    const itemResult = await client.query(
+      'SELECT item_text FROM checklist_items WHERE item_id = $1',
+      [item_id]
+    );
+    
+    const equipment_name = itemResult.rows[0]?.item_text || '';
+    
+    // Get next sequence number for this store
+    const sequenceResult = await client.query(`
+      SELECT COUNT(*) + 1 as next_sequence 
+      FROM manager_store_issue_logs 
+      WHERE store_id = $1
+    `, [store_id]);
+    
+    const nextSequence = sequenceResult.rows[0].next_sequence;
+    const service_ticket_id = `${store_id}-${String(nextSequence).padStart(3, '0')}`;
+    
+    // Insert the issue log
+    const result = await client.query(`
+      INSERT INTO manager_store_issue_logs (
+        workflow_id,
+        item_id,
+        store_id,
+        location_id,
+        equipment_name,
+        issue_type,
+        issue_value,
+        action_taken,
+        logged_by,
+        logged_at,
+        reported_at,
+        resolved,
+        photo_url,
+        service_ticket_id
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), NOW(), false, $10, $11)
+      RETURNING *
+    `, [
+      workflow_id,
+      item_id,
+      store_id,
+      location_id,
+      equipment_name,
+      issue_type,
+      issue_value,
+      action_taken,
+      logged_by,
+      photo_url || null,
+      service_ticket_id
+    ]);
+    
+    await client.query('COMMIT');
+    
+    res.json({ 
+      success: true, 
+      issue: result.rows[0],
+      service_ticket_id: service_ticket_id
+    });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error('Error creating issue log:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: error.message || 'Failed to create issue log' 
+    });
+  } finally {
+    client.release();
+  }
+});
+
+// Get issue logs - updated to include service_ticket_id in response
 app.get('/api/manager-store-issue-logs', async (req, res) => {
   const { workflow_id, store_id, resolved } = req.query;
   
@@ -2522,10 +2621,14 @@ app.get('/api/manager-store-issue-logs', async (req, res) => {
         il.*,
         ci.item_text,
         ci.category,
-        m.first_name || ' ' || m.last_name as logged_by_name
+        m.first_name || ' ' || m.last_name as logged_by_name,
+        l.city,
+        l.street_name,
+        l.phone as store_phone
       FROM manager_store_issue_logs il
       JOIN checklist_items ci ON il.item_id = ci.item_id
       LEFT JOIN managers m ON il.logged_by = m.manager_id
+      LEFT JOIN locations l ON il.store_id = l.store_id
       WHERE 1=1
     `;
     
@@ -2539,7 +2642,7 @@ app.get('/api/manager-store-issue-logs', async (req, res) => {
     }
     
     if (store_id) {
-      query += ` AND il.workflow_id IN (SELECT workflow_id FROM store_workflows WHERE store_id = $${paramIndex})`;
+      query += ` AND il.store_id = $${paramIndex}`;
       params.push(store_id);
       paramIndex++;
     }
@@ -2547,9 +2650,10 @@ app.get('/api/manager-store-issue-logs', async (req, res) => {
     if (resolved !== undefined) {
       query += ` AND il.resolved = $${paramIndex}`;
       params.push(resolved === 'true');
+      paramIndex++;
     }
     
-    query += ' ORDER BY il.logged_at DESC';
+    query += ' ORDER BY il.reported_at DESC';
     
     const result = await pool.query(query, params);
     
@@ -2559,86 +2663,6 @@ app.get('/api/manager-store-issue-logs', async (req, res) => {
     res.status(500).json({ success: false, message: 'Failed to fetch issue logs' });
   }
 });
-
-// Create new issue log
-app.post('/api/manager-store-issue-logs', async (req, res) => {
-  const { 
-    workflow_id, 
-    item_id, 
-    issue_type, 
-    issue_value, 
-    action_taken, 
-    logged_by,
-    quantity_affected,
-    photo_url 
-  } = req.body;
-  
-  try {
-    const result = await pool.query(`
-      INSERT INTO manager_store_issue_logs (
-        workflow_id,
-        item_id,
-        issue_type,
-        issue_value,
-        action_taken,
-        logged_by,
-        logged_at,
-        resolved,
-        quantity_affected,
-        photo_url
-      ) VALUES ($1, $2, $3, $4, $5, $6, NOW(), false, $7, $8)
-      RETURNING *
-    `, [
-      workflow_id,
-      item_id,
-      issue_type,
-      issue_value,
-      action_taken,
-      logged_by,
-      quantity_affected || null,
-      photo_url || null
-    ]);
-    
-    res.json({ 
-      success: true, 
-      issue: result.rows[0] 
-    });
-  } catch (error) {
-    console.error('Error creating issue log:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Failed to create issue log' 
-    });
-  }
-});
-
-// Mark issue as resolved
-app.put('/api/manager-store-issue-logs/:logId/resolve', async (req, res) => {
-  const { logId } = req.params;
-  const { resolved_by, resolution_notes } = req.body;
-  
-  try {
-    const result = await pool.query(`
-      UPDATE manager_store_issue_logs
-      SET 
-        resolved = true,
-        resolved_at = NOW(),
-        action_taken = action_taken || E'\n\nResolution: ' || $2
-      WHERE log_id = $1
-      RETURNING *
-    `, [logId, resolution_notes || 'Resolved']);
-    
-    if (result.rows.length === 0) {
-      return res.status(404).json({ success: false, message: 'Issue log not found' });
-    }
-    
-    res.json({ success: true, issue: result.rows[0] });
-  } catch (error) {
-    console.error('Error resolving issue:', error);
-    res.status(500).json({ success: false, message: 'Failed to resolve issue' });
-  }
-});
-
 
 
 
