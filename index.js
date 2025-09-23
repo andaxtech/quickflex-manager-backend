@@ -2387,27 +2387,41 @@ if (item.item_type === 'temperature') {
                         item.item_text.toLowerCase().includes('beverage') ? 'beverage_cooler' :
                         item.category;
   
+  // Check if temperature log already exists
+const existingTempLog = await client.query(
+  'SELECT log_id FROM temperature_logs WHERE workflow_id = $1 AND item_id = $2',
+  [workflowId, itemId]
+);
+
+let temp_log_id;
+
+if (existingTempLog.rows.length > 0) {
+  // Update existing log
+  temp_log_id = existingTempLog.rows[0].log_id;
+  await client.query(`
+    UPDATE temperature_logs 
+    SET temperature = $1, unit = 'F', is_compliant = $2, notes = $3, logged_at = CURRENT_TIMESTAMP
+    WHERE log_id = $4
+  `, [parseFloat(value), isCompliant, notes || '', temp_log_id]);
+} else {
+  // Insert new log
   const tempLogResult = await client.query(`
     INSERT INTO temperature_logs (
       store_id, location_id, workflow_id, item_id, equipment_type, 
       temperature, unit, is_compliant, logged_by, notes, photo_urls
     ) VALUES ($1, $2, $3, $4, $5, $6, 'F', $7, $8, $9, '[]'::jsonb)
-    ON CONFLICT (workflow_id, item_id) 
-    DO UPDATE SET 
-      temperature = EXCLUDED.temperature,
-      is_compliant = EXCLUDED.is_compliant,
-      notes = EXCLUDED.notes,
-      logged_at = CURRENT_TIMESTAMP
     RETURNING log_id
   `, [store_id, location_id, workflowId, itemId, equipment_type, 
-      parseFloat(value), isCompliant, managerId, notes]);
+      parseFloat(value), isCompliant, managerId, notes || '']);
   
-  // Link to workflow completion
-  const temp_log_id = tempLogResult.rows[0].log_id;
-  await client.query(
-    'UPDATE workflow_completions SET temperature_log_id = $1 WHERE workflow_id = $2 AND item_id = $3',
-    [temp_log_id, workflowId, itemId]
-  );
+  temp_log_id = tempLogResult.rows[0].log_id;
+}
+
+// Link to workflow completion
+await client.query(
+  'UPDATE workflow_completions SET temperature_log_id = $1 WHERE workflow_id = $2 AND item_id = $3',
+  [temp_log_id, workflowId, itemId]
+);
 }
     
     // Check for critical violations
