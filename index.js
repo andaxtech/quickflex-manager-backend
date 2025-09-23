@@ -2275,13 +2275,16 @@ app.post('/api/workflows/:workflowId/items/:itemId/complete', async (req, res) =
     
     // Validate value based on item type
 let isCompliant = true;
+let minValue = null;
+let maxValue = null;
+
 if (item.item_type === 'temperature') {
   const numValue = parseFloat(value);
-  const minValue = parseFloat(item.min_value);
-  const maxValue = parseFloat(item.max_value);
+  minValue = item.min_value ? parseFloat(item.min_value) : null;
+  maxValue = item.max_value ? parseFloat(item.max_value) : null;
   
-  if (!isNaN(minValue) && numValue < minValue) isCompliant = false;
-  if (!isNaN(maxValue) && numValue > maxValue) isCompliant = false;
+  if (minValue !== null && numValue < minValue) isCompliant = false;
+  if (maxValue !== null && numValue > maxValue) isCompliant = false;
   
   console.log('Temperature validation:', {
     value: numValue,
@@ -2425,7 +2428,9 @@ await client.query(
     // Check for critical violations
     // Log temperature issues to manager_store_issue_logs
     if (item.item_type === 'temperature' && !isCompliant) {
-      const issueType = value < minValue ? 'temperature_low' : 'temperature_high';
+      const minValue = item.min_value ? parseFloat(item.min_value) : null;
+      const maxValue = item.max_value ? parseFloat(item.max_value) : null;
+      const issueType = parseFloat(value) < minValue ? 'temperature_low' : 'temperature_high';
   const actionTaken = item.action_if_no || 'Temperature out of range - action required';
   
   await client.query(`
