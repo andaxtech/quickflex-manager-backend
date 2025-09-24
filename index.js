@@ -1187,6 +1187,75 @@ app.delete('/api/my-stores/:storeId', async (req, res) => {
   }
 });
 
+
+
+// Get manager details with store
+app.get('/api/managers/:managerId', async (req, res) => {
+  const { managerId } = req.params;
+
+  try {
+    // Get manager basic info
+    const managerQuery = `
+      SELECT 
+        m.manager_id,
+        m.first_name,
+        m.last_name,
+        m.phone_number,
+        m.status
+      FROM managers m
+      WHERE m.manager_id = $1
+    `;
+    const managerResult = await pool.query(managerQuery, [managerId]);
+
+    if (managerResult.rows.length === 0) {
+      return res.status(404).json({ 
+        success: false, 
+        message: 'Manager not found' 
+      });
+    }
+
+    const manager = managerResult.rows[0];
+
+    // Get manager's stores from manager_store_links
+    const storesQuery = `
+      SELECT 
+        msl.store_id,
+        msl.location_id,
+        msl.added_at
+      FROM manager_store_links msl
+      WHERE msl.manager_id = $1
+      ORDER BY msl.added_at DESC
+    `;
+    const storesResult = await pool.query(storesQuery, [managerId]);
+
+    res.json({
+      success: true,
+      data: {
+        ...manager,
+        store_id: storesResult.rows.length > 0 ? storesResult.rows[0].store_id : null,
+        stores: storesResult.rows
+      }
+    });
+  } catch (error) {
+    console.error('Error fetching manager details:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Failed to fetch manager details' 
+    });
+  }
+});
+
+
+
+
+
+
+
+
+
+
+
+
 // Manager login with Clerk
 app.post('/api/managers/clerk-login', async (req, res) => {
   const { clerkUserId } = req.body;
@@ -1245,9 +1314,21 @@ app.post('/api/managers/clerk-login', async (req, res) => {
       });
     }
 
+    // Get the manager's stores
+    const storesQuery = `
+      SELECT msl.store_id, l.city 
+      FROM manager_store_links msl
+      JOIN locations l ON msl.store_id = l.store_id
+      WHERE msl.manager_id = $1
+      ORDER BY msl.added_at DESC
+      LIMIT 1
+    `;
+    const storesResult = await pool.query(storesQuery, [manager.manager_id]);
+    
     res.json({
       success: true,
       managerId: manager.manager_id,
+      storeId: storesResult.rows.length > 0 ? storesResult.rows[0].store_id : null,
       manager: {
         id: manager.manager_id,
         firstName: manager.first_name,
