@@ -2880,17 +2880,53 @@ app.get('/api/stores/:storeId/points/today', async (req, res) => {
 const cron = require('node-cron');
 
 
-// Log waste items
+// Log waste items - Updated with new fields
 app.post('/api/waste-logs', async (req, res) => {
-  const { workflow_id, item_id, manager_id, item_name, amount, amount_unit, reason, image_url } = req.body;
+  const { 
+    workflow_id, 
+    item_id, 
+    manager_id, 
+    item_name, 
+    amount, 
+    amount_unit, 
+    reason, 
+    image_url,
+    store_id,
+    temperature_reading,
+    expiration_date 
+  } = req.body;
   
   try {
+    // Get store_id from workflow if not provided
+    let final_store_id = store_id;
+    if (!final_store_id && workflow_id) {
+      const workflowResult = await pool.query(
+        'SELECT store_id FROM store_workflows WHERE workflow_id = $1',
+        [workflow_id]
+      );
+      if (workflowResult.rows.length > 0) {
+        final_store_id = workflowResult.rows[0].store_id;
+      }
+    }
+    
     const result = await pool.query(
       `INSERT INTO waste_logs 
-      (workflow_id, item_id, manager_id, item_name, amount, amount_unit, reason, image_url)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+      (workflow_id, item_id, manager_id, item_name, amount, amount_unit, reason, image_url, store_id, temperature_reading, expiration_date)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
       RETURNING *`,
-      [workflow_id, item_id, manager_id, item_name, amount, amount_unit, reason, image_url]
+      [
+        workflow_id, 
+        item_id, 
+        manager_id, 
+        item_name, 
+        amount, 
+        amount_unit || 'packs', 
+        reason, 
+        image_url || null,
+        final_store_id,
+        temperature_reading || null,
+        expiration_date || null
+      ]
     );
     
     res.json({ success: true, waste_log: result.rows[0] });
