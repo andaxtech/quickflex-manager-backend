@@ -3152,6 +3152,313 @@ console.log('Daily workflow generation completed');
   }
 });
 
+
+
+// ==================== Incident management ROUTES ====================
+
+
+// Incident Management API
+// Core API endpoints for managing serious incidents in Domino's stores
+
+// Assuming you have your database connection and model setup
+// Replace 'IncidentModel' with your actual database model/query method
+
+// GET /api/incidents - Get all incidents with filtering
+async function getIncidents(req, res) {
+  try {
+    const {
+      store_id,
+      status,
+      category,
+      start_date,
+      end_date,
+      injury_reported,
+      escalation_required,
+      page = 1,
+      limit = 20
+    } = req.query;
+
+    // Build filter conditions
+    const filters = {};
+    if (store_id) filters.store_id = store_id;
+    if (status) filters.status = status;
+    if (category) filters.category = category;
+    if (injury_reported !== undefined) filters.injury_reported = injury_reported === 'true';
+    if (escalation_required !== undefined) filters.escalation_required = escalation_required === 'true';
+    
+    // Date range filtering
+    if (start_date || end_date) {
+      filters.incident_date = {};
+      if (start_date) filters.incident_date.$gte = new Date(start_date);
+      if (end_date) filters.incident_date.$lte = new Date(end_date);
+    }
+
+    // Pagination
+    const offset = (page - 1) * limit;
+
+    // Execute database query - adjust based on your ORM/database library
+    const incidents = await IncidentModel.findAll({
+      where: filters,
+      limit: parseInt(limit),
+      offset: offset,
+      order: [['incident_date', 'DESC']]
+    });
+
+    const totalCount = await IncidentModel.count({ where: filters });
+
+    res.json({
+      success: true,
+      data: incidents,
+      pagination: {
+        page: parseInt(page),
+        limit: parseInt(limit),
+        total: totalCount,
+        pages: Math.ceil(totalCount / limit)
+      }
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch incidents',
+      message: error.message
+    });
+  }
+}
+
+// GET /api/incidents/:id - Get single incident by ID
+async function getIncidentById(req, res) {
+  try {
+    const { id } = req.params;
+    
+    const incident = await IncidentModel.findByPk(id);
+    
+    if (!incident) {
+      return res.status(404).json({
+        success: false,
+        error: 'Incident not found'
+      });
+    }
+
+    res.json({
+      success: true,
+      data: incident
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch incident',
+      message: error.message
+    });
+  }
+}
+
+// POST /api/incidents - Create new incident
+async function createIncident(req, res) {
+  try {
+    const {
+      incident_date,
+      reported_by,
+      store_id,
+      category,
+      subtype,
+      description,
+      customer_involved,
+      employee_involved,
+      third_party_involved,
+      injury_reported,
+      escalation_required
+    } = req.body;
+
+    // Validation
+    const requiredFields = ['incident_date', 'reported_by', 'store_id', 'category', 'description'];
+    const missingFields = requiredFields.filter(field => !req.body[field]);
+    
+    if (missingFields.length > 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing required fields',
+        fields: missingFields
+      });
+    }
+
+    // Validate enum values
+    const validReporters = ['manager', 'employee', 'customer'];
+    const validCategories = ['IT', 'store_equipment', 'food_safety', 'employee_related', 'customer_service', 'security', 'other'];
+    
+    if (!validReporters.includes(reported_by)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid reported_by value',
+        valid_values: validReporters
+      });
+    }
+    
+    if (!validCategories.includes(category)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid category value',
+        valid_values: validCategories
+      });
+    }
+
+    // Create incident with UUID (if your DB doesn't auto-generate)
+    const incidentData = {
+      incident_id: generateUUID(), // Use your UUID generation method
+      incident_date: new Date(incident_date),
+      reported_by,
+      store_id,
+      category,
+      subtype: subtype || null,
+      description,
+      customer_involved: customer_involved || false,
+      employee_involved: employee_involved || false,
+      third_party_involved: third_party_involved || false,
+      injury_reported: injury_reported || false,
+      escalation_required: escalation_required || false,
+      status: 'open',
+      created_at: new Date(),
+      updated_at: new Date(),
+      created_by: req.user?.id || 'system', // From auth middleware
+    };
+
+    const incident = await IncidentModel.create(incidentData);
+
+    // Log escalation if required
+    if (escalation_required) {
+      console.log(`ESCALATION REQUIRED: Incident ${incident.incident_id} at store ${store_id}`);
+      // TODO: Add actual notification logic (email/SMS/Slack)
+    }
+
+    res.status(201).json({
+      success: true,
+      data: incident,
+      message: 'Incident created successfully'
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: 'Failed to create incident',
+      message: error.message
+    });
+  }
+}
+
+// PUT /api/incidents/:id - Update incident
+async function updateIncident(req, res) {
+  try {
+    const { id } = req.params;
+    const updateData = req.body;
+    
+    const incident = await IncidentModel.findByPk(id);
+    
+    if (!incident) {
+      return res.status(404).json({
+        success: false,
+        error: 'Incident not found'
+      });
+    }
+
+    // Validate status transitions
+    if (updateData.status) {
+      const validStatuses = ['open', 'in_progress', 'closed'];
+      if (!validStatuses.includes(updateData.status)) {
+        return res.status(400).json({
+          success: false,
+          error: 'Invalid status value',
+          valid_values: validStatuses
+        });
+      }
+      
+      // If closing, require closure notes
+      if (updateData.status === 'closed' && !updateData.closure_notes) {
+        return res.status(400).json({
+          success: false,
+          error: 'Closure notes required when closing incident'
+        });
+      }
+      
+      // Set closure date if closing
+      if (updateData.status === 'closed') {
+        updateData.closure_date = new Date();
+      }
+    }
+
+    // Always update the updated_at timestamp
+    updateData.updated_at = new Date();
+    updateData.updated_by = req.user?.id || 'system';
+    
+    // Update incident
+    await incident.update(updateData);
+
+    res.json({
+      success: true,
+      data: incident,
+      message: 'Incident updated successfully'
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: 'Failed to update incident',
+      message: error.message
+    });
+  }
+}
+
+// GET /api/incidents/stats/summary - Get incident statistics
+async function getIncidentStats(req, res) {
+  try {
+    const { store_id, start_date, end_date } = req.query;
+    
+    const filters = {};
+    if (store_id) filters.store_id = store_id;
+    if (start_date || end_date) {
+      filters.incident_date = {};
+      if (start_date) filters.incident_date.$gte = new Date(start_date);
+      if (end_date) filters.incident_date.$lte = new Date(end_date);
+    }
+
+    // Get summary statistics - adjust query based on your database
+    const totalIncidents = await IncidentModel.count({ where: filters });
+    const openIncidents = await IncidentModel.count({ where: { ...filters, status: 'open' } });
+    const closedIncidents = await IncidentModel.count({ where: { ...filters, status: 'closed' } });
+    const injuryIncidents = await IncidentModel.count({ where: { ...filters, injury_reported: true } });
+    const escalatedIncidents = await IncidentModel.count({ where: { ...filters, escalation_required: true } });
+
+    // Get breakdown by category
+    const categoryBreakdown = await IncidentModel.findAll({
+      where: filters,
+      attributes: [
+        'category',
+        [sequelize.fn('COUNT', sequelize.col('incident_id')), 'count']
+      ],
+      group: ['category']
+    });
+
+    res.json({
+      success: true,
+      data: {
+        summary: {
+          total_incidents: totalIncidents,
+          open_incidents: openIncidents,
+          closed_incidents: closedIncidents,
+          injury_incidents: injuryIncidents,
+          escalated_incidents: escalatedIncidents
+        },
+        by_category: categoryBreakdown,
+        filters_applied: filters
+      }
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch statistics',
+      message: error.message
+    });
+  }
+}
+
+
+
 const PORT = process.env.PORT || 5003;
 app.listen(PORT, () => {
   console.log('✅ Manager backend is up and running on port', PORT);
