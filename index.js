@@ -3163,8 +3163,21 @@ console.log('Daily workflow generation completed');
 // Assuming you have your database connection and model setup
 // Replace 'IncidentModel' with your actual database model/query method
 
+// Add this after your other route definitions (around line 1000 in your file)
+
+// ==================== INCIDENT MANAGEMENT ROUTES ====================
+
+// UUID generator function
+function generateUUID() {
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+    const r = Math.random() * 16 | 0;
+    const v = c == 'x' ? r : (r & 0x3 | 0x8);
+    return v.toString(16);
+  });
+}
+
 // GET /api/incidents - Get all incidents with filtering
-async function getIncidents(req, res) {
+app.get('/api/incidents', async (req, res) => {
   try {
     const {
       store_id,
@@ -3178,37 +3191,75 @@ async function getIncidents(req, res) {
       limit = 20
     } = req.query;
 
-    // Build filter conditions
-    const filters = {};
-    if (store_id) filters.store_id = store_id;
-    if (status) filters.status = status;
-    if (category) filters.category = category;
-    if (injury_reported !== undefined) filters.injury_reported = injury_reported === 'true';
-    if (escalation_required !== undefined) filters.escalation_required = escalation_required === 'true';
-    
-    // Date range filtering
-    if (start_date || end_date) {
-      filters.incident_date = {};
-      if (start_date) filters.incident_date.$gte = new Date(start_date);
-      if (end_date) filters.incident_date.$lte = new Date(end_date);
+    // Build WHERE clause
+    let whereClause = 'WHERE 1=1';
+    const params = [];
+    let paramIndex = 1;
+
+    if (store_id) {
+      whereClause += ` AND store_id = $${paramIndex}`;
+      params.push(store_id);
+      paramIndex++;
     }
 
-    // Pagination
+    if (status) {
+      whereClause += ` AND status = $${paramIndex}`;
+      params.push(status);
+      paramIndex++;
+    }
+
+    if (category) {
+      whereClause += ` AND category = $${paramIndex}`;
+      params.push(category);
+      paramIndex++;
+    }
+
+    if (injury_reported !== undefined) {
+      whereClause += ` AND injury_reported = $${paramIndex}`;
+      params.push(injury_reported === 'true');
+      paramIndex++;
+    }
+
+    if (escalation_required !== undefined) {
+      whereClause += ` AND escalation_required = $${paramIndex}`;
+      params.push(escalation_required === 'true');
+      paramIndex++;
+    }
+
+    if (start_date) {
+      whereClause += ` AND incident_date >= $${paramIndex}::date`;
+      params.push(start_date);
+      paramIndex++;
+    }
+
+    if (end_date) {
+      whereClause += ` AND incident_date <= $${paramIndex}::date`;
+      params.push(end_date);
+      paramIndex++;
+    }
+
+    // Calculate offset
     const offset = (page - 1) * limit;
 
-    // Execute database query - adjust based on your ORM/database library
-    const incidents = await IncidentModel.findAll({
-      where: filters,
-      limit: parseInt(limit),
-      offset: offset,
-      order: [['incident_date', 'DESC']]
-    });
+    // Get total count
+    const countQuery = `SELECT COUNT(*) as total FROM incidents ${whereClause}`;
+    const countResult = await pool.query(countQuery, params);
+    const totalCount = parseInt(countResult.rows[0].total);
 
-    const totalCount = await IncidentModel.count({ where: filters });
+    // Get incidents
+    const query = `
+      SELECT * FROM incidents 
+      ${whereClause} 
+      ORDER BY incident_date DESC 
+      LIMIT ${parseInt(limit)} 
+      OFFSET ${offset}
+    `;
+
+    const result = await pool.query(query, params);
 
     res.json({
       success: true,
-      data: incidents,
+      data: result.rows,
       pagination: {
         page: parseInt(page),
         limit: parseInt(limit),
@@ -3217,22 +3268,24 @@ async function getIncidents(req, res) {
       }
     });
   } catch (error) {
+    console.error('Error fetching incidents:', error);
     res.status(500).json({
       success: false,
       error: 'Failed to fetch incidents',
       message: error.message
     });
   }
-}
+});
 
 // GET /api/incidents/:id - Get single incident by ID
-async function getIncidentById(req, res) {
+app.get('/api/incidents/:id', async (req, res) => {
   try {
     const { id } = req.params;
     
-    const incident = await IncidentModel.findByPk(id);
+    const query = 'SELECT * FROM incidents WHERE incident_id = $1';
+    const result = await pool.query(query, [id]);
     
-    if (!incident) {
+    if (result.rows.length === 0) {
       return res.status(404).json({
         success: false,
         error: 'Incident not found'
@@ -3241,19 +3294,20 @@ async function getIncidentById(req, res) {
 
     res.json({
       success: true,
-      data: incident
+      data: result.rows[0]
     });
   } catch (error) {
+    console.error('Error fetching incident:', error);
     res.status(500).json({
       success: false,
       error: 'Failed to fetch incident',
       message: error.message
     });
   }
-}
+});
 
 // POST /api/incidents - Create new incident
-async function createIncident(req, res) {
+app.post('/api/incidents', async (req, res) => {
   try {
     const {
       incident_date,
@@ -3301,32 +3355,56 @@ async function createIncident(req, res) {
       });
     }
 
-    // Create incident with UUID (if your DB doesn't auto-generate)
-    const incidentData = {
-      incident_id: generateUUID(), // Use your UUID generation method
-      incident_date: new Date(incident_date),
+    const incidentId = generateUUID();
+
+    const query = `
+      INSERT INTO incidents (
+        incident_id,
+        incident_date,
+        reported_by,
+        store_id,
+        category,
+        subtype,
+        description,
+        customer_involved,
+        employee_involved,
+        third_party_involved,
+        injury_reported,
+        escalation_required,
+        status,
+        created_at,
+        updated_at,
+        created_by
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+      RETURNING *
+    `;
+
+    const values = [
+      incidentId,
+      incident_date,
       reported_by,
       store_id,
       category,
-      subtype: subtype || null,
+      subtype || null,
       description,
-      customer_involved: customer_involved || false,
-      employee_involved: employee_involved || false,
-      third_party_involved: third_party_involved || false,
-      injury_reported: injury_reported || false,
-      escalation_required: escalation_required || false,
-      status: 'open',
-      created_at: new Date(),
-      updated_at: new Date(),
-      created_by: req.user?.id || 'system', // From auth middleware
-    };
+      customer_involved || false,
+      employee_involved || false,
+      third_party_involved || false,
+      injury_reported || false,
+      escalation_required || false,
+      'open',
+      new Date(),
+      new Date(),
+      req.body.created_by || 'system'
+    ];
 
-    const incident = await IncidentModel.create(incidentData);
+    const result = await pool.query(query, values);
+    const incident = result.rows[0];
 
     // Log escalation if required
     if (escalation_required) {
       console.log(`ESCALATION REQUIRED: Incident ${incident.incident_id} at store ${store_id}`);
-      // TODO: Add actual notification logic (email/SMS/Slack)
+      // TODO: Add notification logic here
     }
 
     res.status(201).json({
@@ -3335,23 +3413,26 @@ async function createIncident(req, res) {
       message: 'Incident created successfully'
     });
   } catch (error) {
+    console.error('Error creating incident:', error);
     res.status(500).json({
       success: false,
       error: 'Failed to create incident',
       message: error.message
     });
   }
-}
+});
 
 // PUT /api/incidents/:id - Update incident
-async function updateIncident(req, res) {
+app.put('/api/incidents/:id', async (req, res) => {
   try {
     const { id } = req.params;
     const updateData = req.body;
     
-    const incident = await IncidentModel.findByPk(id);
+    // Check if incident exists
+    const checkQuery = 'SELECT * FROM incidents WHERE incident_id = $1';
+    const checkResult = await pool.query(checkQuery, [id]);
     
-    if (!incident) {
+    if (checkResult.rows.length === 0) {
       return res.status(404).json({
         success: false,
         error: 'Incident not found'
@@ -3378,84 +3459,138 @@ async function updateIncident(req, res) {
       }
       
       // Set closure date if closing
-      if (updateData.status === 'closed') {
+      if (updateData.status === 'closed' && !updateData.closure_date) {
         updateData.closure_date = new Date();
       }
     }
 
+    // Build UPDATE query dynamically
+    const updateFields = [];
+    const values = [];
+    let paramIndex = 1;
+
+    // List of allowed fields to update
+    const allowedFields = [
+      'status', 'subtype', 'description', 'customer_involved',
+      'employee_involved', 'third_party_involved', 'injury_reported',
+      'escalation_required', 'closure_notes', 'closure_date'
+    ];
+
+    for (const field of allowedFields) {
+      if (updateData.hasOwnProperty(field)) {
+        updateFields.push(`${field} = $${paramIndex}`);
+        values.push(updateData[field]);
+        paramIndex++;
+      }
+    }
+
     // Always update the updated_at timestamp
-    updateData.updated_at = new Date();
-    updateData.updated_by = req.user?.id || 'system';
-    
-    // Update incident
-    await incident.update(updateData);
+    updateFields.push(`updated_at = $${paramIndex}`);
+    values.push(new Date());
+    paramIndex++;
+
+    updateFields.push(`updated_by = $${paramIndex}`);
+    values.push(updateData.updated_by || 'system');
+    paramIndex++;
+
+    // Add incident_id to values array
+    values.push(id);
+
+    const updateQuery = `
+      UPDATE incidents 
+      SET ${updateFields.join(', ')}
+      WHERE incident_id = $${paramIndex}
+      RETURNING *
+    `;
+
+    const result = await pool.query(updateQuery, values);
 
     res.json({
       success: true,
-      data: incident,
+      data: result.rows[0],
       message: 'Incident updated successfully'
     });
   } catch (error) {
+    console.error('Error updating incident:', error);
     res.status(500).json({
       success: false,
       error: 'Failed to update incident',
       message: error.message
     });
   }
-}
+});
 
 // GET /api/incidents/stats/summary - Get incident statistics
-async function getIncidentStats(req, res) {
+app.get('/api/incidents/stats/summary', async (req, res) => {
   try {
     const { store_id, start_date, end_date } = req.query;
     
-    const filters = {};
-    if (store_id) filters.store_id = store_id;
-    if (start_date || end_date) {
-      filters.incident_date = {};
-      if (start_date) filters.incident_date.$gte = new Date(start_date);
-      if (end_date) filters.incident_date.$lte = new Date(end_date);
+    // Build WHERE clause
+    let whereClause = 'WHERE 1=1';
+    const params = [];
+    let paramIndex = 1;
+
+    if (store_id) {
+      whereClause += ` AND store_id = $${paramIndex}`;
+      params.push(store_id);
+      paramIndex++;
     }
 
-    // Get summary statistics - adjust query based on your database
-    const totalIncidents = await IncidentModel.count({ where: filters });
-    const openIncidents = await IncidentModel.count({ where: { ...filters, status: 'open' } });
-    const closedIncidents = await IncidentModel.count({ where: { ...filters, status: 'closed' } });
-    const injuryIncidents = await IncidentModel.count({ where: { ...filters, injury_reported: true } });
-    const escalatedIncidents = await IncidentModel.count({ where: { ...filters, escalation_required: true } });
+    if (start_date) {
+      whereClause += ` AND incident_date >= $${paramIndex}::date`;
+      params.push(start_date);
+      paramIndex++;
+    }
+
+    if (end_date) {
+      whereClause += ` AND incident_date <= $${paramIndex}::date`;
+      params.push(end_date);
+      paramIndex++;
+    }
+
+    // Get summary statistics
+    const statsQuery = `
+      SELECT 
+        COUNT(*) as total_incidents,
+        COUNT(CASE WHEN status = 'open' THEN 1 END) as open_incidents,
+        COUNT(CASE WHEN status = 'closed' THEN 1 END) as closed_incidents,
+        COUNT(CASE WHEN injury_reported = true THEN 1 END) as injury_incidents,
+        COUNT(CASE WHEN escalation_required = true THEN 1 END) as escalated_incidents
+      FROM incidents ${whereClause}
+    `;
+
+    const statsResult = await pool.query(statsQuery, params);
 
     // Get breakdown by category
-    const categoryBreakdown = await IncidentModel.findAll({
-      where: filters,
-      attributes: [
-        'category',
-        [sequelize.fn('COUNT', sequelize.col('incident_id')), 'count']
-      ],
-      group: ['category']
-    });
+    const categoryQuery = `
+      SELECT 
+        category,
+        COUNT(*) as count
+      FROM incidents 
+      ${whereClause}
+      GROUP BY category
+      ORDER BY count DESC
+    `;
+
+    const categoryResult = await pool.query(categoryQuery, params);
 
     res.json({
       success: true,
       data: {
-        summary: {
-          total_incidents: totalIncidents,
-          open_incidents: openIncidents,
-          closed_incidents: closedIncidents,
-          injury_incidents: injuryIncidents,
-          escalated_incidents: escalatedIncidents
-        },
-        by_category: categoryBreakdown,
-        filters_applied: filters
+        summary: statsResult.rows[0],
+        by_category: categoryResult.rows,
+        filters_applied: { store_id, start_date, end_date }
       }
     });
   } catch (error) {
+    console.error('Error fetching statistics:', error);
     res.status(500).json({
       success: false,
       error: 'Failed to fetch statistics',
       message: error.message
     });
   }
-}
+});
 
 
 
