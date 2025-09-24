@@ -3154,18 +3154,7 @@ console.log('Daily workflow generation completed');
 
 
 
-// ==================== Incident management ROUTES ====================
-
-
-// Incident Management API
-// Core API endpoints for managing serious incidents in Domino's stores
-
-// Assuming you have your database connection and model setup
-// Replace 'IncidentModel' with your actual database model/query method
-
-// Add this after your other route definitions (around line 1000 in your file)
-
-// ==================== INCIDENT MANAGEMENT ROUTES ====================
+/// ==================== INCIDENT MANAGEMENT ROUTES (UPDATED) ====================
 
 // UUID generator function
 function generateUUID() {
@@ -3176,6 +3165,117 @@ function generateUUID() {
   });
 }
 
+// Valid categories and subtypes based on the CSV data
+const INCIDENT_CATEGORIES = {
+  'Food Safety': [
+    'Illness claim',
+    'Allergen cross-contact',
+    'Foreign object',
+    'Temp abuse w/ discard'
+  ],
+  'Regulatory/Health Dept': [
+    'Failed inspection',
+    'Closure/embargo',
+    'Citation/complaint visit'
+  ],
+  'People/HR': [
+    'Harassment/discrimination',
+    'Wage/hour violation',
+    'Minors/child labor',
+    'Retaliation',
+    'Workplace violence/threats',
+    'Intoxication/drugs'
+  ],
+  'Injury/Accidents': [
+    'Employee injury',
+    'Customer slip/fall',
+    'Delivery crash (injury/3rd-party)'
+  ],
+  'Security/Crime': [
+    'Robbery',
+    'Burglary',
+    'Vandalism',
+    'Assault',
+    'Weapons sighting',
+    'Counterfeit bills',
+    'Cash shortage/theft',
+    'Chargeback/fraud pattern'
+  ],
+  'Data/Privacy': [
+    'Payment/PII exposure',
+    'Skimmer found',
+    'Lost device'
+  ],
+  'Facilities Emergencies': [
+    'Fire/ANSUL discharge',
+    'Gas/CO₂ leak',
+    'Major flood',
+    'Prolonged power outage'
+  ],
+  'Public/ADA': [
+    'ADA/service animal dispute',
+    'Social media crisis'
+  ]
+};
+
+// Incidents that require escalation (based on CSV)
+const ESCALATION_REQUIRED_SUBTYPES = new Set([
+  'Illness claim',
+  'Allergen cross-contact',
+  'Foreign object',
+  'Failed inspection',
+  'Closure/embargo',
+  'Citation/complaint visit',
+  'Harassment/discrimination',
+  'Wage/hour violation',
+  'Minors/child labor',
+  'Retaliation',
+  'Workplace violence/threats',
+  'Intoxication/drugs',
+  'Employee injury',
+  'Customer slip/fall',
+  'Delivery crash (injury/3rd-party)',
+  'Robbery',
+  'Burglary',
+  'Assault',
+  'Weapons sighting',
+  'Cash shortage/theft',
+  'Payment/PII exposure',
+  'Skimmer found',
+  'Lost device',
+  'Fire/ANSUL discharge',
+  'Gas/CO₂ leak',
+  'Major flood',
+  'Prolonged power outage',
+  'ADA/service animal dispute',
+  'Social media crisis'
+]);
+
+// GET /api/incidents/categories - Get all valid categories and subtypes
+app.get('/api/incidents/categories', async (req, res) => {
+  try {
+    const categoriesWithDetails = Object.entries(INCIDENT_CATEGORIES).map(([category, subtypes]) => ({
+      category,
+      subtypes: subtypes.map(subtype => ({
+        name: subtype,
+        escalation_required: ESCALATION_REQUIRED_SUBTYPES.has(subtype)
+      }))
+    }));
+
+    res.json({
+      success: true,
+      data: categoriesWithDetails
+    });
+  } catch (error) {
+    console.error('Error fetching categories:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch categories',
+      message: error.message
+    });
+  }
+});
+
 // GET /api/incidents - Get all incidents with filtering
 app.get('/api/incidents', async (req, res) => {
   try {
@@ -3183,6 +3283,7 @@ app.get('/api/incidents', async (req, res) => {
       store_id,
       status,
       category,
+      subtype,
       start_date,
       end_date,
       injury_reported,
@@ -3211,6 +3312,12 @@ app.get('/api/incidents', async (req, res) => {
     if (category) {
       whereClause += ` AND category = $${paramIndex}`;
       params.push(category);
+      paramIndex++;
+    }
+
+    if (subtype) {
+      whereClause += ` AND subtype = $${paramIndex}`;
+      params.push(subtype);
       paramIndex++;
     }
 
@@ -3250,7 +3357,7 @@ app.get('/api/incidents', async (req, res) => {
     const query = `
       SELECT * FROM incidents 
       ${whereClause} 
-      ORDER BY incident_date DESC 
+      ORDER BY incident_date DESC, created_at DESC 
       LIMIT ${parseInt(limit)} 
       OFFSET ${offset}
     `;
@@ -3337,7 +3444,6 @@ app.post('/api/incidents', async (req, res) => {
 
     // Validate enum values
     const validReporters = ['manager', 'employee', 'customer'];
-    const validCategories = ['IT', 'store_equipment', 'food_safety', 'employee_related', 'customer_service', 'security', 'other'];
     
     if (!validReporters.includes(reported_by)) {
       return res.status(400).json({
@@ -3347,12 +3453,30 @@ app.post('/api/incidents', async (req, res) => {
       });
     }
     
-    if (!validCategories.includes(category)) {
+    // Validate category
+    if (!INCIDENT_CATEGORIES[category]) {
       return res.status(400).json({
         success: false,
         error: 'Invalid category value',
-        valid_values: validCategories
+        valid_values: Object.keys(INCIDENT_CATEGORIES)
       });
+    }
+
+    // Validate subtype if provided
+    if (subtype && !INCIDENT_CATEGORIES[category].includes(subtype)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid subtype for selected category',
+        valid_subtypes: INCIDENT_CATEGORIES[category]
+      });
+    }
+
+    // Auto-determine escalation based on subtype if not explicitly provided
+    let shouldEscalate = escalation_required;
+    if (shouldEscalate === undefined && subtype) {
+      shouldEscalate = ESCALATION_REQUIRED_SUBTYPES.has(subtype);
+    } else if (shouldEscalate === undefined) {
+      shouldEscalate = false;
     }
 
     const incidentId = generateUUID();
@@ -3391,7 +3515,7 @@ app.post('/api/incidents', async (req, res) => {
       employee_involved || false,
       third_party_involved || false,
       injury_reported || false,
-      escalation_required || false,
+      shouldEscalate,
       'open',
       new Date(),
       new Date(),
@@ -3402,15 +3526,16 @@ app.post('/api/incidents', async (req, res) => {
     const incident = result.rows[0];
 
     // Log escalation if required
-    if (escalation_required) {
-      console.log(`ESCALATION REQUIRED: Incident ${incident.incident_id} at store ${store_id}`);
-      // TODO: Add notification logic here
+    if (shouldEscalate) {
+      console.log(`ESCALATION REQUIRED: Incident ${incident.incident_id} - ${category}/${subtype} at store ${store_id}`);
+      // TODO: Add notification logic here (email, SMS, etc.)
     }
 
     res.status(201).json({
       success: true,
       data: incident,
-      message: 'Incident created successfully'
+      message: 'Incident created successfully',
+      escalation_triggered: shouldEscalate
     });
   } catch (error) {
     console.error('Error creating incident:', error);
@@ -3439,6 +3564,8 @@ app.put('/api/incidents/:id', async (req, res) => {
       });
     }
 
+    const currentIncident = checkResult.rows[0];
+
     // Validate status transitions
     if (updateData.status) {
       const validStatuses = ['open', 'in_progress', 'closed'];
@@ -3451,7 +3578,7 @@ app.put('/api/incidents/:id', async (req, res) => {
       }
       
       // If closing, require closure notes
-      if (updateData.status === 'closed' && !updateData.closure_notes) {
+      if (updateData.status === 'closed' && !updateData.closure_notes && !currentIncident.closure_notes) {
         return res.status(400).json({
           success: false,
           error: 'Closure notes required when closing incident'
@@ -3464,6 +3591,25 @@ app.put('/api/incidents/:id', async (req, res) => {
       }
     }
 
+    // Validate category if being updated
+    if (updateData.category && !INCIDENT_CATEGORIES[updateData.category]) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid category value',
+        valid_values: Object.keys(INCIDENT_CATEGORIES)
+      });
+    }
+
+    // Validate subtype if being updated
+    const categoryToCheck = updateData.category || currentIncident.category;
+    if (updateData.subtype && !INCIDENT_CATEGORIES[categoryToCheck].includes(updateData.subtype)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid subtype for selected category',
+        valid_subtypes: INCIDENT_CATEGORIES[categoryToCheck]
+      });
+    }
+
     // Build UPDATE query dynamically
     const updateFields = [];
     const values = [];
@@ -3471,7 +3617,7 @@ app.put('/api/incidents/:id', async (req, res) => {
 
     // List of allowed fields to update
     const allowedFields = [
-      'status', 'subtype', 'description', 'customer_involved',
+      'status', 'category', 'subtype', 'description', 'customer_involved',
       'employee_involved', 'third_party_involved', 'injury_reported',
       'escalation_required', 'closure_notes', 'closure_date'
     ];
@@ -3504,10 +3650,19 @@ app.put('/api/incidents/:id', async (req, res) => {
     `;
 
     const result = await pool.query(updateQuery, values);
+    const updatedIncident = result.rows[0];
+
+    // Check if escalation status changed
+    if (updateData.escalation_required !== undefined && 
+        updateData.escalation_required !== currentIncident.escalation_required &&
+        updateData.escalation_required === true) {
+      console.log(`ESCALATION TRIGGERED: Incident ${id} escalation updated at store ${updatedIncident.store_id}`);
+      // TODO: Add notification logic here
+    }
 
     res.json({
       success: true,
-      data: result.rows[0],
+      data: updatedIncident,
       message: 'Incident updated successfully'
     });
   } catch (error) {
@@ -3553,9 +3708,13 @@ app.get('/api/incidents/stats/summary', async (req, res) => {
       SELECT 
         COUNT(*) as total_incidents,
         COUNT(CASE WHEN status = 'open' THEN 1 END) as open_incidents,
+        COUNT(CASE WHEN status = 'in_progress' THEN 1 END) as in_progress_incidents,
         COUNT(CASE WHEN status = 'closed' THEN 1 END) as closed_incidents,
         COUNT(CASE WHEN injury_reported = true THEN 1 END) as injury_incidents,
-        COUNT(CASE WHEN escalation_required = true THEN 1 END) as escalated_incidents
+        COUNT(CASE WHEN escalation_required = true THEN 1 END) as escalated_incidents,
+        COUNT(CASE WHEN customer_involved = true THEN 1 END) as customer_incidents,
+        COUNT(CASE WHEN employee_involved = true THEN 1 END) as employee_incidents,
+        COUNT(CASE WHEN third_party_involved = true THEN 1 END) as third_party_incidents
       FROM incidents ${whereClause}
     `;
 
@@ -3565,7 +3724,9 @@ app.get('/api/incidents/stats/summary', async (req, res) => {
     const categoryQuery = `
       SELECT 
         category,
-        COUNT(*) as count
+        COUNT(*) as count,
+        COUNT(CASE WHEN status = 'open' THEN 1 END) as open_count,
+        COUNT(CASE WHEN escalation_required = true THEN 1 END) as escalated_count
       FROM incidents 
       ${whereClause}
       GROUP BY category
@@ -3574,11 +3735,47 @@ app.get('/api/incidents/stats/summary', async (req, res) => {
 
     const categoryResult = await pool.query(categoryQuery, params);
 
+    // Get breakdown by subtype for top categories
+    const subtypeQuery = `
+      SELECT 
+        category,
+        subtype,
+        COUNT(*) as count
+      FROM incidents 
+      ${whereClause}
+      AND subtype IS NOT NULL
+      GROUP BY category, subtype
+      ORDER BY category, count DESC
+    `;
+
+    const subtypeResult = await pool.query(subtypeQuery, params);
+
+    // Get recent escalated incidents
+    const escalatedQuery = `
+      SELECT 
+        incident_id,
+        incident_date,
+        store_id,
+        category,
+        subtype,
+        description,
+        status
+      FROM incidents 
+      ${whereClause}
+      AND escalation_required = true
+      ORDER BY incident_date DESC
+      LIMIT 10
+    `;
+
+    const escalatedResult = await pool.query(escalatedQuery, params);
+
     res.json({
       success: true,
       data: {
         summary: statsResult.rows[0],
         by_category: categoryResult.rows,
+        by_subtype: subtypeResult.rows,
+        recent_escalated: escalatedResult.rows,
         filters_applied: { store_id, start_date, end_date }
       }
     });
@@ -3592,6 +3789,106 @@ app.get('/api/incidents/stats/summary', async (req, res) => {
   }
 });
 
+// GET /api/incidents/escalated - Get all escalated incidents
+app.get('/api/incidents/escalated', async (req, res) => {
+  try {
+    const { status, store_id, limit = 50 } = req.query;
+    
+    let whereClause = 'WHERE escalation_required = true';
+    const params = [];
+    let paramIndex = 1;
+
+    if (status) {
+      whereClause += ` AND status = $${paramIndex}`;
+      params.push(status);
+      paramIndex++;
+    }
+
+    if (store_id) {
+      whereClause += ` AND store_id = $${paramIndex}`;
+      params.push(store_id);
+      paramIndex++;
+    }
+
+    const query = `
+      SELECT 
+        i.*,
+        CASE 
+          WHEN i.status = 'open' THEN EXTRACT(EPOCH FROM (NOW() - i.created_at))/3600
+          ELSE NULL
+        END as hours_open
+      FROM incidents i
+      ${whereClause}
+      ORDER BY 
+        CASE WHEN i.status = 'open' THEN 0 ELSE 1 END,
+        i.incident_date DESC
+      LIMIT ${parseInt(limit)}
+    `;
+
+    const result = await pool.query(query, params);
+
+    res.json({
+      success: true,
+      data: result.rows,
+      total: result.rows.length
+    });
+  } catch (error) {
+    console.error('Error fetching escalated incidents:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch escalated incidents',
+      message: error.message
+    });
+  }
+});
+
+// DELETE /api/incidents/:id - Soft delete incident (set status to deleted)
+app.delete('/api/incidents/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { deleted_by, reason } = req.body;
+
+    // Check if incident exists
+    const checkQuery = 'SELECT * FROM incidents WHERE incident_id = $1';
+    const checkResult = await pool.query(checkQuery, [id]);
+    
+    if (checkResult.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'Incident not found'
+      });
+    }
+
+    // Soft delete by setting status to 'deleted' and adding deletion notes
+    const deleteQuery = `
+      UPDATE incidents 
+      SET 
+        status = 'deleted',
+        closure_notes = COALESCE(closure_notes, '') || E'\\n[DELETED: ' || $2 || ']',
+        closure_date = NOW(),
+        updated_at = NOW(),
+        updated_by = $3
+      WHERE incident_id = $1
+      RETURNING *
+    `;
+
+    const values = [id, reason || 'No reason provided', deleted_by || 'system'];
+    const result = await pool.query(deleteQuery, values);
+
+    res.json({
+      success: true,
+      message: 'Incident deleted successfully',
+      data: result.rows[0]
+    });
+  } catch (error) {
+    console.error('Error deleting incident:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to delete incident',
+      message: error.message
+    });
+  }
+});
 
 
 const PORT = process.env.PORT || 5003;
