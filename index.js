@@ -3335,13 +3335,39 @@ const ESCALATION_REQUIRED_SUBTYPES = new Set([
 // GET /api/incidents/categories - Get all valid categories and subtypes
 app.get('/api/incidents/categories', async (req, res) => {
   try {
-    const categoriesWithDetails = Object.entries(INCIDENT_CATEGORIES).map(([category, subtypes]) => ({
-      category,
-      subtypes: subtypes.map(subtype => ({
-        name: subtype,
-        escalation_required: ESCALATION_REQUIRED_SUBTYPES.has(subtype)
-      }))
-    }));
+    // Query the incident_categories table from your database
+    const result = await pool.query(`
+      SELECT 
+        category,
+        subtype,
+        description,
+        escalation_required,
+        icon
+      FROM incident_categories
+      WHERE active = true
+      ORDER BY category, display_order
+    `);
+
+    // Transform the flat rows into nested structure
+    const categoriesMap = {};
+    
+    result.rows.forEach(row => {
+      if (!categoriesMap[row.category]) {
+        categoriesMap[row.category] = {
+          category: row.category,
+          icon: row.icon,
+          subtypes: []
+        };
+      }
+      
+      categoriesMap[row.category].subtypes.push({
+        name: row.subtype,
+        description: row.description,
+        escalation_required: row.escalation_required
+      });
+    });
+
+    const categoriesWithDetails = Object.values(categoriesMap);
 
     res.json({
       success: true,
