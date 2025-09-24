@@ -3335,7 +3335,7 @@ const ESCALATION_REQUIRED_SUBTYPES = new Set([
 // GET /api/incidents/categories - Get all valid categories and subtypes
 app.get('/api/incidents/categories', async (req, res) => {
   try {
-    // Query the incident_categories table from your database
+    // Query the incident_types table from your database
     const result = await pool.query(`
       SELECT 
         category,
@@ -3343,7 +3343,7 @@ app.get('/api/incidents/categories', async (req, res) => {
         description,
         escalation_required,
         icon
-      FROM incident_categories
+      FROM incident_types
       WHERE active = true
       ORDER BY category, display_order
     `);
