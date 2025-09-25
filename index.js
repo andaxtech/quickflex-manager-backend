@@ -3238,6 +3238,9 @@ console.log('Daily workflow generation completed');
 /// ==================== INCIDENT MANAGEMENT ROUTES (UPDATED WITH IMAGES) ====================
 
 // UUID generator function
+/// ==================== INCIDENT MANAGEMENT ROUTES (UPDATED WITH GCP IMAGE UPLOAD) ====================
+
+// UUID generator function
 function generateUUID() {
   return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
     const r = Math.random() * 16 | 0;
@@ -3345,6 +3348,125 @@ function parseImagesJson(images) {
   }
   return [];
 }
+
+// POST /api/incidents/upload-image - Upload incident image to GCP
+app.post('/api/incidents/upload-image', upload.single('image'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({
+        success: false,
+        error: 'No image file provided'
+      });
+    }
+
+    const { storeId, managerId } = req.body;
+    
+    if (!storeId || !managerId) {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing required fields: storeId and managerId'
+      });
+    }
+
+    // Generate folder structure: incidents/storeId/YYYY-MM-DD/filename
+    const date = new Date();
+    const dateFolder = date.toISOString().split('T')[0];
+    const fileName = `incidents/${storeId}/${dateFolder}/${Date.now()}-${req.file.originalname.replace(/\s+/g, '-')}`;
+    
+    // Use the incidents bucket
+    const bucket = storage.bucket('quickflex-store-incidents-photos');
+    const blob = bucket.file(fileName);
+    
+    const blobStream = blob.createWriteStream({
+      resumable: false,
+      metadata: {
+        contentType: req.file.mimetype,
+        metadata: {
+          uploadedBy: managerId,
+          uploadedAt: new Date().toISOString(),
+          storeId: storeId,
+          originalName: req.file.originalname
+        }
+      },
+    });
+
+    blobStream.on('error', (err) => {
+      console.error('GCS upload error:', err);
+      res.status(500).json({
+        success: false,
+        error: 'Failed to upload image',
+        message: err.message
+      });
+    });
+
+    blobStream.on('finish', async () => {
+      try {
+        // Make the file public
+        await blob.makePublic();
+        
+        // Get the public URL
+        const publicUrl = `https://storage.googleapis.com/quickflex-store-incidents-photos/${fileName}`;
+        
+        res.json({
+          success: true,
+          data: {
+            url: publicUrl,
+            filename: req.file.originalname,
+            size: req.file.size,
+            type: req.file.mimetype,
+            uploadedAt: new Date().toISOString(),
+            gcpPath: fileName,
+            storeId: storeId,
+            uploadedBy: managerId
+          }
+        });
+      } catch (err) {
+        console.error('Error making file public:', err);
+        
+        // If making public fails, try to get a signed URL
+        try {
+          const [signedUrl] = await blob.getSignedUrl({
+            action: 'read',
+            expires: Date.now() + 365 * 24 * 60 * 60 * 1000, // 1 year
+          });
+          
+          res.json({
+            success: true,
+            data: {
+              url: signedUrl,
+              filename: req.file.originalname,
+              size: req.file.size,
+              type: req.file.mimetype,
+              uploadedAt: new Date().toISOString(),
+              gcpPath: fileName,
+              storeId: storeId,
+              uploadedBy: managerId,
+              isSignedUrl: true
+            }
+          });
+        } catch (signedUrlError) {
+          console.error('Error creating signed URL:', signedUrlError);
+          res.status(500).json({
+            success: false,
+            error: 'Failed to generate accessible URL',
+            message: signedUrlError.message
+          });
+        }
+      }
+    });
+
+    // End the stream with the file buffer
+    blobStream.end(req.file.buffer);
+
+  } catch (error) {
+    console.error('Error in incident image upload:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to upload image',
+      message: error.message
+    });
+  }
+});
 
 // GET /api/incidents/categories - Get all valid categories and subtypes
 app.get('/api/incidents/categories', async (req, res) => {
@@ -3615,10 +3737,9 @@ app.post('/api/incidents', async (req, res) => {
       });
     }
 
-    // Validate images array if provided
+    // Process images array if provided
     let processedImages = [];
     if (images && Array.isArray(images)) {
-      // Validate each image object
       processedImages = images.map(img => {
         if (!img.url) {
           throw new Error('Each image must have a URL');
@@ -3628,7 +3749,9 @@ app.post('/api/incidents', async (req, res) => {
           filename: img.filename || 'unnamed.jpg',
           uploadedAt: img.uploadedAt || new Date().toISOString(),
           size: img.size || 0,
-          type: img.type || 'image/jpeg'
+          type: img.type || 'image/jpeg',
+          gcpPath: img.gcpPath || null,
+          uploadedBy: img.uploadedBy || req.body.created_by || 'system'
         };
       });
     }
@@ -3788,7 +3911,9 @@ app.put('/api/incidents/:id', async (req, res) => {
           filename: img.filename || 'unnamed.jpg',
           uploadedAt: img.uploadedAt || new Date().toISOString(),
           size: img.size || 0,
-          type: img.type || 'image/jpeg'
+          type: img.type || 'image/jpeg',
+          gcpPath: img.gcpPath || null,
+          uploadedBy: img.uploadedBy || updateData.updated_by || 'system'
         };
       });
     }
@@ -4101,20 +4226,13 @@ app.delete('/api/incidents/:id', async (req, res) => {
 });
 
 // POST /api/incidents/:id/images - Add image to existing incident
-app.post('/api/incidents/:id/images', async (req, res) => {
+app.post('/api/incidents/:id/images', upload.single('image'), async (req, res) => {
   try {
     const { id } = req.params;
-    const { url, filename, size, type } = req.body;
+    const { managerId } = req.body;
 
-    if (!url) {
-      return res.status(400).json({
-        success: false,
-        error: 'Image URL is required'
-      });
-    }
-
-    // Get current incident
-    const getQuery = 'SELECT images FROM incidents WHERE incident_id = $1';
+    // Check if incident exists and get store_id
+    const getQuery = 'SELECT images, store_id FROM incidents WHERE incident_id = $1';
     const getResult = await pool.query(getQuery, [id]);
 
     if (getResult.rows.length === 0) {
@@ -4124,19 +4242,92 @@ app.post('/api/incidents/:id/images', async (req, res) => {
       });
     }
 
+    const { store_id } = getResult.rows[0];
+    
     // Parse current images
     let currentImages = parseImagesJson(getResult.rows[0].images);
 
-    // Add new image
-    const newImage = {
-      url,
-      filename: filename || 'unnamed.jpg',
-      uploadedAt: new Date().toISOString(),
-      size: size || 0,
-      type: type || 'image/jpeg'
-    };
+    // If a file was uploaded, upload to GCS
+    if (req.file) {
+      const date = new Date();
+      const dateFolder = date.toISOString().split('T')[0];
+      const fileName = `incidents/${store_id}/${dateFolder}/${Date.now()}-${req.file.originalname.replace(/\s+/g, '-')}`;
+      
+      const bucket = storage.bucket('quickflex-store-incidents-photos');
+      const blob = bucket.file(fileName);
+      
+      const uploadPromise = new Promise((resolve, reject) => {
+        const blobStream = blob.createWriteStream({
+          resumable: false,
+          metadata: {
+            contentType: req.file.mimetype,
+            metadata: {
+              uploadedBy: managerId || 'system',
+              uploadedAt: new Date().toISOString(),
+              storeId: store_id,
+              incidentId: id
+            }
+          },
+        });
 
-    currentImages.push(newImage);
+        blobStream.on('error', reject);
+        blobStream.on('finish', async () => {
+          try {
+            await blob.makePublic();
+            const publicUrl = `https://storage.googleapis.com/quickflex-store-incidents-photos/${fileName}`;
+            resolve({
+              url: publicUrl,
+              filename: req.file.originalname,
+              uploadedAt: new Date().toISOString(),
+              size: req.file.size,
+              type: req.file.mimetype,
+              gcpPath: fileName,
+              uploadedBy: managerId || 'system'
+            });
+          } catch (err) {
+            // Try signed URL as fallback
+            const [signedUrl] = await blob.getSignedUrl({
+              action: 'read',
+              expires: Date.now() + 365 * 24 * 60 * 60 * 1000,
+            });
+            resolve({
+              url: signedUrl,
+              filename: req.file.originalname,
+              uploadedAt: new Date().toISOString(),
+              size: req.file.size,
+              type: req.file.mimetype,
+              gcpPath: fileName,
+              uploadedBy: managerId || 'system',
+              isSignedUrl: true
+            });
+          }
+        });
+
+        blobStream.end(req.file.buffer);
+      });
+
+      const newImage = await uploadPromise;
+      currentImages.push(newImage);
+    } else {
+      // If no file but URL provided in body
+      const { url, filename, size, type } = req.body;
+      
+      if (!url) {
+        return res.status(400).json({
+          success: false,
+          error: 'Image file or URL is required'
+        });
+      }
+
+      currentImages.push({
+        url,
+        filename: filename || 'unnamed.jpg',
+        uploadedAt: new Date().toISOString(),
+        size: size || 0,
+        type: type || 'image/jpeg',
+        uploadedBy: managerId || 'system'
+      });
+    }
 
     // Update incident
     const updateQuery = `
@@ -4196,6 +4387,19 @@ app.delete('/api/incidents/:id/images/:imageIndex', async (req, res) => {
         success: false,
         error: 'Invalid image index'
       });
+    }
+
+    // Optional: Delete from GCS if gcpPath exists
+    const imageToDelete = currentImages[index];
+    if (imageToDelete.gcpPath) {
+      try {
+        const bucket = storage.bucket('quickflex-store-incidents-photos');
+        await bucket.file(imageToDelete.gcpPath).delete();
+        console.log(`Deleted image from GCS: ${imageToDelete.gcpPath}`);
+      } catch (gcpError) {
+        console.error('Error deleting from GCS:', gcpError);
+        // Continue with removal from database even if GCS deletion fails
+      }
     }
 
     // Remove image at index
