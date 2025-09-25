@@ -3462,12 +3462,16 @@ app.get('/api/incidents', async (req, res) => {
 
     // Get incidents
     const query = `
-      SELECT * FROM incidents 
-      ${whereClause} 
-      ORDER BY incident_date DESC, created_at DESC 
-      LIMIT ${parseInt(limit)} 
-      OFFSET ${offset}
-    `;
+  SELECT 
+    i.*,
+    m.first_name || ' ' || m.last_name as reported_by_name
+  FROM incidents i
+  LEFT JOIN managers m ON i.created_by::integer = m.manager_id
+  ${whereClause} 
+  ORDER BY i.incident_date DESC, i.created_at DESC 
+  LIMIT ${parseInt(limit)} 
+  OFFSET ${offset}
+`;
 
     const result = await pool.query(query, params);
 
@@ -3496,7 +3500,14 @@ app.get('/api/incidents/:id', async (req, res) => {
   try {
     const { id } = req.params;
     
-    const query = 'SELECT * FROM incidents WHERE incident_id = $1';
+    const query = `
+      SELECT 
+        i.*,
+        m.first_name || ' ' || m.last_name as reported_by_name
+      FROM incidents i
+      LEFT JOIN managers m ON i.created_by::integer = m.manager_id
+      WHERE i.incident_id = $1
+    `;
     const result = await pool.query(query, [id]);
     
     if (result.rows.length === 0) {
