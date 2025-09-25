@@ -3235,7 +3235,7 @@ console.log('Daily workflow generation completed');
 
 
 
-/// ==================== INCIDENT MANAGEMENT ROUTES (UPDATED) ====================
+/// ==================== INCIDENT MANAGEMENT ROUTES (UPDATED WITH IMAGES) ====================
 
 // UUID generator function
 function generateUUID() {
@@ -3331,6 +3331,20 @@ const ESCALATION_REQUIRED_SUBTYPES = new Set([
   'ADA/service animal dispute',
   'Social media crisis'
 ]);
+
+// Helper function to parse images JSON
+function parseImagesJson(images) {
+  if (!images) return [];
+  if (Array.isArray(images)) return images;
+  if (typeof images === 'string') {
+    try {
+      return JSON.parse(images);
+    } catch (e) {
+      return [];
+    }
+  }
+  return [];
+}
 
 // GET /api/incidents/categories - Get all valid categories and subtypes
 app.get('/api/incidents/categories', async (req, res) => {
@@ -3462,22 +3476,28 @@ app.get('/api/incidents', async (req, res) => {
 
     // Get incidents
     const query = `
-  SELECT 
-    i.*,
-    m.first_name || ' ' || m.last_name as reported_by_name
-  FROM incidents i
-  LEFT JOIN managers m ON i.created_by::integer = m.manager_id
-  ${whereClause} 
-  ORDER BY i.incident_date DESC, i.created_at DESC 
-  LIMIT ${parseInt(limit)} 
-  OFFSET ${offset}
-`;
+      SELECT 
+        i.*,
+        m.first_name || ' ' || m.last_name as reported_by_name
+      FROM incidents i
+      LEFT JOIN managers m ON i.created_by::integer = m.manager_id
+      ${whereClause} 
+      ORDER BY i.incident_date DESC, i.created_at DESC 
+      LIMIT ${parseInt(limit)} 
+      OFFSET ${offset}
+    `;
 
     const result = await pool.query(query, params);
 
+    // Parse images for each incident
+    const incidents = result.rows.map(incident => ({
+      ...incident,
+      images: parseImagesJson(incident.images)
+    }));
+
     res.json({
       success: true,
-      data: result.rows,
+      data: incidents,
       pagination: {
         page: parseInt(page),
         limit: parseInt(limit),
@@ -3517,9 +3537,14 @@ app.get('/api/incidents/:id', async (req, res) => {
       });
     }
 
+    const incident = result.rows[0];
+    
+    // Parse images JSON
+    incident.images = parseImagesJson(incident.images);
+
     res.json({
       success: true,
-      data: result.rows[0]
+      data: incident
     });
   } catch (error) {
     console.error('Error fetching incident:', error);
@@ -3531,7 +3556,7 @@ app.get('/api/incidents/:id', async (req, res) => {
   }
 });
 
-// POST /api/incidents - Create new incident
+// POST /api/incidents - Create new incident with images
 app.post('/api/incidents', async (req, res) => {
   try {
     const {
@@ -3545,7 +3570,8 @@ app.post('/api/incidents', async (req, res) => {
       employee_involved,
       third_party_involved,
       injury_reported,
-      escalation_required
+      escalation_required,
+      images // New field for images array
     } = req.body;
 
     // Validation
@@ -3589,6 +3615,24 @@ app.post('/api/incidents', async (req, res) => {
       });
     }
 
+    // Validate images array if provided
+    let processedImages = [];
+    if (images && Array.isArray(images)) {
+      // Validate each image object
+      processedImages = images.map(img => {
+        if (!img.url) {
+          throw new Error('Each image must have a URL');
+        }
+        return {
+          url: img.url,
+          filename: img.filename || 'unnamed.jpg',
+          uploadedAt: img.uploadedAt || new Date().toISOString(),
+          size: img.size || 0,
+          type: img.type || 'image/jpeg'
+        };
+      });
+    }
+
     // Auto-determine escalation based on subtype if not explicitly provided
     let shouldEscalate = escalation_required;
     if (shouldEscalate === undefined && subtype) {
@@ -3614,10 +3658,11 @@ app.post('/api/incidents', async (req, res) => {
         injury_reported,
         escalation_required,
         status,
+        images,
         created_at,
         updated_at,
         created_by
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
       RETURNING *
     `;
 
@@ -3635,6 +3680,7 @@ app.post('/api/incidents', async (req, res) => {
       injury_reported || false,
       shouldEscalate,
       'open',
+      JSON.stringify(processedImages), // Store images as JSON
       new Date(),
       new Date(),
       req.body.created_by || 'system'
@@ -3642,6 +3688,9 @@ app.post('/api/incidents', async (req, res) => {
 
     const result = await pool.query(query, values);
     const incident = result.rows[0];
+
+    // Parse images back to array for response
+    incident.images = parseImagesJson(incident.images);
 
     // Log escalation if required
     if (shouldEscalate) {
@@ -3728,6 +3777,22 @@ app.put('/api/incidents/:id', async (req, res) => {
       });
     }
 
+    // Validate images if being updated
+    if (updateData.images && Array.isArray(updateData.images)) {
+      updateData.images = updateData.images.map(img => {
+        if (!img.url) {
+          throw new Error('Each image must have a URL');
+        }
+        return {
+          url: img.url,
+          filename: img.filename || 'unnamed.jpg',
+          uploadedAt: img.uploadedAt || new Date().toISOString(),
+          size: img.size || 0,
+          type: img.type || 'image/jpeg'
+        };
+      });
+    }
+
     // Build UPDATE query dynamically
     const updateFields = [];
     const values = [];
@@ -3737,13 +3802,18 @@ app.put('/api/incidents/:id', async (req, res) => {
     const allowedFields = [
       'status', 'category', 'subtype', 'description', 'customer_involved',
       'employee_involved', 'third_party_involved', 'injury_reported',
-      'escalation_required', 'closure_notes', 'closure_date'
+      'escalation_required', 'closure_notes', 'closure_date', 'images'
     ];
 
     for (const field of allowedFields) {
       if (updateData.hasOwnProperty(field)) {
         updateFields.push(`${field} = $${paramIndex}`);
-        values.push(updateData[field]);
+        // Special handling for images
+        if (field === 'images') {
+          values.push(JSON.stringify(updateData[field]));
+        } else {
+          values.push(updateData[field]);
+        }
         paramIndex++;
       }
     }
@@ -3769,6 +3839,9 @@ app.put('/api/incidents/:id', async (req, res) => {
 
     const result = await pool.query(updateQuery, values);
     const updatedIncident = result.rows[0];
+
+    // Parse images back to array for response
+    updatedIncident.images = parseImagesJson(updatedIncident.images);
 
     // Check if escalation status changed
     if (updateData.escalation_required !== undefined && 
@@ -3832,7 +3905,8 @@ app.get('/api/incidents/stats/summary', async (req, res) => {
         COUNT(CASE WHEN escalation_required = true THEN 1 END) as escalated_incidents,
         COUNT(CASE WHEN customer_involved = true THEN 1 END) as customer_incidents,
         COUNT(CASE WHEN employee_involved = true THEN 1 END) as employee_incidents,
-        COUNT(CASE WHEN third_party_involved = true THEN 1 END) as third_party_incidents
+        COUNT(CASE WHEN third_party_involved = true THEN 1 END) as third_party_incidents,
+        COUNT(CASE WHEN images::text != '[]' AND images IS NOT NULL THEN 1 END) as incidents_with_images
       FROM incidents ${whereClause}
     `;
 
@@ -3844,7 +3918,8 @@ app.get('/api/incidents/stats/summary', async (req, res) => {
         category,
         COUNT(*) as count,
         COUNT(CASE WHEN status = 'open' THEN 1 END) as open_count,
-        COUNT(CASE WHEN escalation_required = true THEN 1 END) as escalated_count
+        COUNT(CASE WHEN escalation_required = true THEN 1 END) as escalated_count,
+        COUNT(CASE WHEN images::text != '[]' AND images IS NOT NULL THEN 1 END) as with_images_count
       FROM incidents 
       ${whereClause}
       GROUP BY category
@@ -3877,7 +3952,8 @@ app.get('/api/incidents/stats/summary', async (req, res) => {
         category,
         subtype,
         description,
-        status
+        status,
+        images
       FROM incidents 
       ${whereClause}
       AND escalation_required = true
@@ -3887,13 +3963,19 @@ app.get('/api/incidents/stats/summary', async (req, res) => {
 
     const escalatedResult = await pool.query(escalatedQuery, params);
 
+    // Parse images for escalated incidents
+    const escalatedIncidents = escalatedResult.rows.map(incident => ({
+      ...incident,
+      images: parseImagesJson(incident.images)
+    }));
+
     res.json({
       success: true,
       data: {
         summary: statsResult.rows[0],
         by_category: categoryResult.rows,
         by_subtype: subtypeResult.rows,
-        recent_escalated: escalatedResult.rows,
+        recent_escalated: escalatedIncidents,
         filters_applied: { store_id, start_date, end_date }
       }
     });
@@ -3945,10 +4027,16 @@ app.get('/api/incidents/escalated', async (req, res) => {
 
     const result = await pool.query(query, params);
 
+    // Parse images for each incident
+    const incidents = result.rows.map(incident => ({
+      ...incident,
+      images: parseImagesJson(incident.images)
+    }));
+
     res.json({
       success: true,
-      data: result.rows,
-      total: result.rows.length
+      data: incidents,
+      total: incidents.length
     });
   } catch (error) {
     console.error('Error fetching escalated incidents:', error);
@@ -3993,10 +4081,14 @@ app.delete('/api/incidents/:id', async (req, res) => {
     const values = [id, reason || 'No reason provided', deleted_by || 'system'];
     const result = await pool.query(deleteQuery, values);
 
+    // Parse images for response
+    const incident = result.rows[0];
+    incident.images = parseImagesJson(incident.images);
+
     res.json({
       success: true,
       message: 'Incident deleted successfully',
-      data: result.rows[0]
+      data: incident
     });
   } catch (error) {
     console.error('Error deleting incident:', error);
@@ -4008,6 +4100,138 @@ app.delete('/api/incidents/:id', async (req, res) => {
   }
 });
 
+// POST /api/incidents/:id/images - Add image to existing incident
+app.post('/api/incidents/:id/images', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { url, filename, size, type } = req.body;
+
+    if (!url) {
+      return res.status(400).json({
+        success: false,
+        error: 'Image URL is required'
+      });
+    }
+
+    // Get current incident
+    const getQuery = 'SELECT images FROM incidents WHERE incident_id = $1';
+    const getResult = await pool.query(getQuery, [id]);
+
+    if (getResult.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'Incident not found'
+      });
+    }
+
+    // Parse current images
+    let currentImages = parseImagesJson(getResult.rows[0].images);
+
+    // Add new image
+    const newImage = {
+      url,
+      filename: filename || 'unnamed.jpg',
+      uploadedAt: new Date().toISOString(),
+      size: size || 0,
+      type: type || 'image/jpeg'
+    };
+
+    currentImages.push(newImage);
+
+    // Update incident
+    const updateQuery = `
+      UPDATE incidents 
+      SET images = $1, updated_at = $2
+      WHERE incident_id = $3
+      RETURNING *
+    `;
+
+    const updateResult = await pool.query(updateQuery, [
+      JSON.stringify(currentImages),
+      new Date(),
+      id
+    ]);
+
+    const incident = updateResult.rows[0];
+    incident.images = currentImages;
+
+    res.json({
+      success: true,
+      data: incident,
+      message: 'Image added successfully'
+    });
+  } catch (error) {
+    console.error('Error adding image:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to add image',
+      message: error.message
+    });
+  }
+});
+
+// DELETE /api/incidents/:id/images/:imageIndex - Remove specific image
+app.delete('/api/incidents/:id/images/:imageIndex', async (req, res) => {
+  try {
+    const { id, imageIndex } = req.params;
+    const index = parseInt(imageIndex);
+
+    // Get current incident
+    const getQuery = 'SELECT images FROM incidents WHERE incident_id = $1';
+    const getResult = await pool.query(getQuery, [id]);
+
+    if (getResult.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'Incident not found'
+      });
+    }
+
+    // Parse current images
+    let currentImages = parseImagesJson(getResult.rows[0].images);
+
+    // Validate index
+    if (index < 0 || index >= currentImages.length) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid image index'
+      });
+    }
+
+    // Remove image at index
+    currentImages.splice(index, 1);
+
+    // Update incident
+    const updateQuery = `
+      UPDATE incidents 
+      SET images = $1, updated_at = $2
+      WHERE incident_id = $3
+      RETURNING *
+    `;
+
+    const updateResult = await pool.query(updateQuery, [
+      JSON.stringify(currentImages),
+      new Date(),
+      id
+    ]);
+
+    const incident = updateResult.rows[0];
+    incident.images = currentImages;
+
+    res.json({
+      success: true,
+      data: incident,
+      message: 'Image removed successfully'
+    });
+  } catch (error) {
+    console.error('Error removing image:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to remove image',
+      message: error.message
+    });
+  }
+});
 
 const PORT = process.env.PORT || 5003;
 app.listen(PORT, () => {
