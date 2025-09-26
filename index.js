@@ -3234,11 +3234,7 @@ console.log('Daily workflow generation completed');
 });
 
 
-
-/// ==================== INCIDENT MANAGEMENT ROUTES (UPDATED WITH IMAGES) ====================
-
-// UUID generator function
-/// ==================== INCIDENT MANAGEMENT ROUTES (UPDATED WITH GCP IMAGE UPLOAD) ====================
+/// ==================== INCIDENT MANAGEMENT ROUTES (UPDATED - NO HARDCODED DATA) ====================
 
 // UUID generator function
 function generateUUID() {
@@ -3249,91 +3245,91 @@ function generateUUID() {
   });
 }
 
-// Valid categories and subtypes based on the CSV data
-const INCIDENT_CATEGORIES = {
-  'Food Safety': [
-    'Illness claim',
-    'Allergen cross-contact',
-    'Foreign object',
-    'Temp abuse w/ discard'
-  ],
-  'Regulatory/Health Dept': [
-    'Failed inspection',
-    'Closure/embargo',
-    'Citation/complaint visit'
-  ],
-  'People/HR': [
-    'Harassment/discrimination',
-    'Wage/hour violation',
-    'Minors/child labor',
-    'Retaliation',
-    'Workplace violence/threats',
-    'Intoxication/drugs'
-  ],
-  'Injury/Accidents': [
-    'Employee injury',
-    'Customer slip/fall',
-    'Delivery crash (injury/3rd-party)'
-  ],
-  'Security/Crime': [
-    'Robbery',
-    'Burglary',
-    'Vandalism',
-    'Assault',
-    'Weapons sighting',
-    'Counterfeit bills',
-    'Cash shortage/theft',
-    'Chargeback/fraud pattern'
-  ],
-  'Data/Privacy': [
-    'Payment/PII exposure',
-    'Skimmer found',
-    'Lost device'
-  ],
-  'Facilities Emergencies': [
-    'Fire/ANSUL discharge',
-    'Gas/CO₂ leak',
-    'Major flood',
-    'Prolonged power outage'
-  ],
-  'Public/ADA': [
-    'ADA/service animal dispute',
-    'Social media crisis'
-  ]
-};
+// Cache for incident types to avoid repeated DB queries
+let incidentTypesCache = null;
+let cacheTimestamp = null;
+const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 
-// Incidents that require escalation (based on CSV)
-const ESCALATION_REQUIRED_SUBTYPES = new Set([
-  'Illness claim',
-  'Allergen cross-contact',
-  'Foreign object',
-  'Failed inspection',
-  'Closure/embargo',
-  'Citation/complaint visit',
-  'Harassment/discrimination',
-  'Wage/hour violation',
-  'Minors/child labor',
-  'Retaliation',
-  'Workplace violence/threats',
-  'Intoxication/drugs',
-  'Employee injury',
-  'Customer slip/fall',
-  'Delivery crash (injury/3rd-party)',
-  'Robbery',
-  'Burglary',
-  'Assault',
-  'Weapons sighting',
-  'Cash shortage/theft',
-  'Payment/PII exposure',
-  'Skimmer found',
-  'Lost device',
-  'Fire/ANSUL discharge',
-  'Gas/CO₂ leak',
-  'Major flood',
-  'Prolonged power outage',
-  'ADA/service animal dispute',
-  'Social media crisis'
-]);
+// Helper to get incident types from database with caching
+async function getIncidentTypes() {
+  const now = Date.now();
+  
+  // Return cached data if still valid
+  if (incidentTypesCache && cacheTimestamp && (now - cacheTimestamp < CACHE_TTL)) {
+    return incidentTypesCache;
+  }
+  
+  // Query database for fresh data
+  const result = await pool.query(`
+    SELECT 
+      category,
+      subtype,
+      description,
+      escalation_required,
+      icon
+    FROM incident_types
+    WHERE active = true
+    ORDER BY category, display_order
+  `);
+  
+  // Transform into useful structure
+  const categoriesMap = {};
+  const escalationRequired = new Set();
+  
+  result.rows.forEach(row => {
+    if (!categoriesMap[row.category]) {
+      categoriesMap[row.category] = [];
+    }
+    categoriesMap[row.category].push(row.subtype);
+    
+    if (row.escalation_required) {
+      escalationRequired.add(row.subtype);
+    }
+  });
+  
+  // Update cache
+  incidentTypesCache = {
+    categories: categoriesMap,
+    escalationRequired: escalationRequired,
+    allTypes: result.rows
+  };
+  cacheTimestamp = now;
+  
+  return incidentTypesCache;
+}
+
+// Helper to validate category and subtype
+async function validateCategoryAndSubtype(category, subtype = null) {
+  const types = await getIncidentTypes();
+  
+  // Check if category exists
+  if (!types.categories[category]) {
+    return {
+      valid: false,
+      error: 'Invalid category value',
+      validCategories: Object.keys(types.categories)
+    };
+  }
+  
+  // Check subtype if provided
+  if (subtype && !types.categories[category].includes(subtype)) {
+    return {
+      valid: false,
+      error: 'Invalid subtype for selected category',
+      validSubtypes: types.categories[category]
+    };
+  }
+  
+  return { valid: true };
+}
+
+// Helper to check if escalation is required
+async function isEscalationRequired(subtype) {
+  if (!subtype) return false;
+  
+  const types = await getIncidentTypes();
+  return types.escalationRequired.has(subtype);
+}
 
 // Helper function to parse images JSON
 function parseImagesJson(images) {
@@ -3693,7 +3689,7 @@ app.post('/api/incidents', async (req, res) => {
       third_party_involved,
       injury_reported,
       escalation_required,
-      images // New field for images array
+      images
     } = req.body;
 
     // Validation
@@ -3719,21 +3715,13 @@ app.post('/api/incidents', async (req, res) => {
       });
     }
     
-    // Validate category
-    if (!INCIDENT_CATEGORIES[category]) {
+    // Validate category and subtype against database
+    const validation = await validateCategoryAndSubtype(category, subtype);
+    if (!validation.valid) {
       return res.status(400).json({
         success: false,
-        error: 'Invalid category value',
-        valid_values: Object.keys(INCIDENT_CATEGORIES)
-      });
-    }
-
-    // Validate subtype if provided
-    if (subtype && !INCIDENT_CATEGORIES[category].includes(subtype)) {
-      return res.status(400).json({
-        success: false,
-        error: 'Invalid subtype for selected category',
-        valid_subtypes: INCIDENT_CATEGORIES[category]
+        error: validation.error,
+        valid_values: validation.validCategories || validation.validSubtypes
       });
     }
 
@@ -3759,7 +3747,7 @@ app.post('/api/incidents', async (req, res) => {
     // Auto-determine escalation based on subtype if not explicitly provided
     let shouldEscalate = escalation_required;
     if (shouldEscalate === undefined && subtype) {
-      shouldEscalate = ESCALATION_REQUIRED_SUBTYPES.has(subtype);
+      shouldEscalate = await isEscalationRequired(subtype);
     } else if (shouldEscalate === undefined) {
       shouldEscalate = false;
     }
@@ -3803,7 +3791,7 @@ app.post('/api/incidents', async (req, res) => {
       injury_reported || false,
       shouldEscalate,
       'open',
-      JSON.stringify(processedImages), // Store images as JSON
+      JSON.stringify(processedImages),
       new Date(),
       new Date(),
       req.body.created_by || 'system'
@@ -3881,23 +3869,19 @@ app.put('/api/incidents/:id', async (req, res) => {
       }
     }
 
-    // Validate category if being updated
-    if (updateData.category && !INCIDENT_CATEGORIES[updateData.category]) {
-      return res.status(400).json({
-        success: false,
-        error: 'Invalid category value',
-        valid_values: Object.keys(INCIDENT_CATEGORIES)
-      });
-    }
-
-    // Validate subtype if being updated
-    const categoryToCheck = updateData.category || currentIncident.category;
-    if (updateData.subtype && !INCIDENT_CATEGORIES[categoryToCheck].includes(updateData.subtype)) {
-      return res.status(400).json({
-        success: false,
-        error: 'Invalid subtype for selected category',
-        valid_subtypes: INCIDENT_CATEGORIES[categoryToCheck]
-      });
+    // Validate category and subtype if being updated
+    if (updateData.category || updateData.subtype) {
+      const categoryToCheck = updateData.category || currentIncident.category;
+      const subtypeToCheck = updateData.subtype !== undefined ? updateData.subtype : currentIncident.subtype;
+      
+      const validation = await validateCategoryAndSubtype(categoryToCheck, subtypeToCheck);
+      if (!validation.valid) {
+        return res.status(400).json({
+          success: false,
+          error: validation.error,
+          valid_values: validation.validCategories || validation.validSubtypes
+        });
+      }
     }
 
     // Validate images if being updated
