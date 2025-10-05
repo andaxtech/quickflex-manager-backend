@@ -268,8 +268,8 @@ bc.cancelled_by,
         d.last_name,
         d.phone_number,
         d.email,
-        d.driver_license_number,
         d.driver_license_expiration,
+        d.profile_photo_path,
         cd.vehicle_registration_expiration,
         i.policy_start_date AS insurance_start,
         i.policy_end_date AS insurance_end,
@@ -315,16 +315,21 @@ cancelledBy: row.cancelled_by,
         name: `${row.manager_first_name || ''} ${row.manager_last_name || ''}`.trim()
       } : null,
       driver: row.driver_id
-        ? {
-            fullName: `${row.first_name} ${row.last_name}`,
-            phone: row.phone_number,
-            email: row.email,
-            licenseNumber: row.driver_license_number,
-            licenseValid: row.driver_license_expiration > new Date(),
-            registrationValid: row.vehicle_registration_expiration > new Date(),
-            insuranceValid: row.insurance_end > new Date(),
-          }
-        : undefined,
+  ? {
+      fullName: `${row.first_name} ${row.last_name}`,
+      firstName: row.first_name,
+      lastName: row.last_name,
+      phone: row.phone_number,
+      email: row.email,
+      licenseNumber: row.driver_license_number,
+      licenseValid: row.driver_license_expiration > new Date(),
+      registrationValid: row.vehicle_registration_expiration > new Date(),
+      insuranceValid: row.insurance_end > new Date(),
+      insuranceStart: row.insurance_start,
+      insuranceEnd: row.insurance_end,
+      profilePhotoPath: row.profile_photo_path,
+    }
+  : undefined,
     }));
 
     res.json({ success: true, blocks });
