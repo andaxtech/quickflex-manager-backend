@@ -417,7 +417,7 @@ app.get('/api/location/:locationId/blocks/:blockId/details', async (req, res) =>
         cd.license_plate,
         i.policy_start_date AS insurance_start,
         i.policy_end_date AS insurance_end,
-        l.time_zone_code
+        l.time_zone_code,
         l.store_latitude,
         l.store_longitude
       FROM blocks b
