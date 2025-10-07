@@ -418,6 +418,8 @@ app.get('/api/location/:locationId/blocks/:blockId/details', async (req, res) =>
         i.policy_start_date AS insurance_start,
         i.policy_end_date AS insurance_end,
         l.time_zone_code
+        l.store_latitude,
+        l.store_longitude
       FROM blocks b
       LEFT JOIN locations l ON b.location_id = l.location_id
       LEFT JOIN block_claims bc ON b.block_id = bc.block_id
@@ -448,6 +450,10 @@ app.get('/api/location/:locationId/blocks/:blockId/details', async (req, res) =>
       claimTime: row.claim_time,
       claimId: row.claim_id,
       timeZoneCode: row.time_zone_code || 'GMT-08:00', // Default to PST if missing
+      storeLocation: {
+        latitude: parseFloat(row.store_latitude) || 37.7749,
+        longitude: parseFloat(row.store_longitude) || -122.4194
+      },
       driver: row.first_name ? {
         driverId: row.driver_id,
         fullName: `${row.first_name} ${row.last_name}`,
