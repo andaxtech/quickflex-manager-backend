@@ -69,15 +69,29 @@ const formattedCoupons = Object.entries(coupons).map(([code, details]) => {
 
 console.log(`Found ${formattedCoupons.length} coupons for store ${storeId}`);
 
-    // Cache the result
+    // Get store information
+    const storeInfo = {
+      isOnline: store.info?.IsOnlineCapable || false,
+      isOpen: store.info?.IsOpen || false,
+      deliveryAvailable: store.info?.ServiceIsOpen?.Delivery || false,
+      carryoutAvailable: store.info?.ServiceIsOpen?.Carryout || false,
+      phone: store.info?.Phone || null,
+      address: store.info?.AddressDescription || null,
+      hours: store.info?.HoursDescription || null,
+      storeAsOfTime: store.info?.StoreAsOfTime || null
+    };
+
+    // Cache the result with store info
     couponCache.set(storeId, {
       coupons: formattedCoupons,
+      storeInfo,
       timestamp: Date.now()
     });
 
     res.json({
       storeId,
       coupons: formattedCoupons,
+      storeInfo,
       cached: false,
       fetchedAt: Date.now()
     });
@@ -118,14 +132,16 @@ exports.getMultipleStoreCoupons = async (req, res) => {
       const batchPromises = batch.map(async (storeId) => {
         try {
           // Check cache first
-          const cached = couponCache.get(storeId);
-          if (cached && (Date.now() - cached.timestamp < CACHE_DURATION)) {
-            return {
-              storeId,
-              coupons: cached.coupons,
-              cached: true
-            };
-          }
+            const cached = couponCache.get(storeId);
+            if (cached && (Date.now() - cached.timestamp < CACHE_DURATION)) {
+              return res.json({
+                storeId,
+                coupons: cached.coupons,
+                storeInfo: cached.storeInfo,
+                cached: true,
+                fetchedAt: cached.timestamp
+              });
+            }
 
           // Fetch from API
 const storeApi = await new Store(storeId);
