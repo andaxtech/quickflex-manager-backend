@@ -37,49 +37,33 @@ exports.getStoreCoupons = async (req, res) => {
     }
 
    // Fetch from Domino's API
+// Fetch from Domino's API
 console.log('=== DEBUGGING STORE', storeId, '===');
 const store = await new Store(storeId);
 
-// Log what we got back
-console.log('1. Store object created:', !!store);
-console.log('2. Store.info exists:', !!store.info);
-console.log('3. Store.menu exists:', !!store.menu);
+// The coupons are nested in store.menu.menu.coupons.products
+let coupons = {};
 
-if (store.info) {
-  console.log('4. Store Address:', store.info.AddressDescription);
-  console.log('5. Store Phone:', store.info.Phone);
-}
-
-if (store.menu) {
-  console.log('6. Menu keys:', Object.keys(store.menu));
-  console.log('7. Coupons object exists:', !!store.menu.coupons);
-  console.log('8. Number of coupons:', Object.keys(store.menu.coupons || {}).length);
+if (store.menu?.menu?.coupons?.products) {
+  coupons = store.menu.menu.coupons.products;
+  console.log('Found coupons in store.menu.menu.coupons.products');
+  console.log('Number of coupons:', Object.keys(coupons).length);
+} else if (store.menu?.menu?.coupons) {
+  // Check all subcategories in coupons
+  const couponCategories = store.menu.menu.coupons;
+  console.log('Coupon categories:', Object.keys(couponCategories));
   
-  // Log first 3 coupon codes if any exist
-  if (store.menu.coupons) {
-    const couponCodes = Object.keys(store.menu.coupons).slice(0, 3);
-    console.log('9. Sample coupon codes:', couponCodes);
+  // Merge all coupon subcategories
+  if (couponCategories.products) {
+    Object.assign(coupons, couponCategories.products);
+  }
+  if (couponCategories.couponTiers) {
+    // This might contain tiered discounts
+    Object.assign(coupons, couponCategories.couponTiers);
   }
 }
 
-// The coupons might be in different locations depending on the API version
-const coupons = store.menu?.coupons || 
-                store.menu?.menu?.coupons || 
-                store.coupons || 
-                {};
-
-// Also check if the menu has a nested menu object
-if (Object.keys(coupons).length === 0 && store.menu?.menu) {
-  console.log('Checking nested menu structure...');
-  console.log('Menu.menu keys:', Object.keys(store.menu.menu).slice(0, 10));
-  
-  // Look for anything that might be coupons
-  for (const [key, value] of Object.entries(store.menu.menu)) {
-    if (key.toLowerCase().includes('coupon') || key.toLowerCase().includes('deal')) {
-      console.log(`Found potential coupon key: ${key}`);
-    }
-  }
-}
+console.log('Total coupons found:', Object.keys(coupons).length);
 console.log('=== END DEBUG ===');
     
     // Transform coupons into a more usable format
