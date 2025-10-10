@@ -1,5 +1,4 @@
 // controllers/couponsController.js
-const { Store } = require('dominos');
 
 // Cache to prevent hitting the API too frequently
 const couponCache = new Map();
@@ -8,9 +7,22 @@ const CACHE_DURATION = 30 * 60 * 1000; // 30 minutes
 // Helper function to add delay between requests
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
+// Dynamically import the ESM module
+let Store;
+(async () => {
+  const dominosModule = await import('dominos');
+  Store = dominosModule.Store;
+})();
+
 // Get coupons for a single store
 exports.getStoreCoupons = async (req, res) => {
   try {
+    // Make sure Store is loaded
+    if (!Store) {
+      const dominosModule = await import('dominos');
+      Store = dominosModule.Store;
+    }
+
     const { storeId } = req.params;
     
     // Check cache first
@@ -64,6 +76,12 @@ exports.getStoreCoupons = async (req, res) => {
 // Get coupons for multiple stores
 exports.getMultipleStoreCoupons = async (req, res) => {
   try {
+    // Make sure Store is loaded
+    if (!Store) {
+      const dominosModule = await import('dominos');
+      Store = dominosModule.Store;
+    }
+
     const { storeIds } = req.body; // Expecting array of store IDs
     
     if (!Array.isArray(storeIds) || storeIds.length === 0) {
