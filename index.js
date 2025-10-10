@@ -30,6 +30,10 @@ const WeatherService = require('./weatherService');
 const StoreIntelligenceService = require('./storeIntelligenceService');
 
 const app = express();
+
+// Trust proxy for Railway deployment
+app.set('trust proxy', true);
+
 app.use(cors());
 app.use(express.json());
 
@@ -37,7 +41,15 @@ app.use(express.json());
 const couponLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
   max: 50, // limit each IP to 50 requests per windowMs
-  message: 'Too many coupon requests, please try again later'
+  message: 'Too many coupon requests, please try again later',
+  standardHeaders: true, // Return rate limit info in the `RateLimit-*` headers
+  legacyHeaders: false, // Disable the `X-RateLimit-*` headers
+  // Skip IP validation for Railway
+  skip: (req) => false,
+  keyGenerator: (req) => {
+    // Use x-forwarded-for header for Railway
+    return req.headers['x-forwarded-for'] || req.connection.remoteAddress || 'unknown';
+  }
 });
 
 // Configure multer for file uploads
