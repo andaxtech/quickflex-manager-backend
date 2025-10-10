@@ -38,43 +38,36 @@ exports.getStoreCoupons = async (req, res) => {
 
    // Fetch from Domino's API
 // Fetch from Domino's API
-console.log('=== DEBUGGING STORE', storeId, '===');
 const store = await new Store(storeId);
 
-// The coupons are nested in store.menu.menu.coupons.products
+// Extract coupons from the correct location
 let coupons = {};
+const couponCategories = store.menu?.menu?.coupons || {};
 
-if (store.menu?.menu?.coupons?.products) {
-  coupons = store.menu.menu.coupons.products;
-  console.log('Found coupons in store.menu.menu.coupons.products');
-  console.log('Number of coupons:', Object.keys(coupons).length);
-} else if (store.menu?.menu?.coupons) {
-  // Check all subcategories in coupons
-  const couponCategories = store.menu.menu.coupons;
-  console.log('Coupon categories:', Object.keys(couponCategories));
-  
-  // Merge all coupon subcategories
-  if (couponCategories.products) {
-    Object.assign(coupons, couponCategories.products);
-  }
-  if (couponCategories.couponTiers) {
-    // This might contain tiered discounts
-    Object.assign(coupons, couponCategories.couponTiers);
-  }
+// Get coupons from products
+if (couponCategories.products) {
+  coupons = { ...coupons, ...couponCategories.products };
 }
 
-console.log('Total coupons found:', Object.keys(coupons).length);
-console.log('=== END DEBUG ===');
-    
-    // Transform coupons into a more usable format
-    const formattedCoupons = Object.entries(coupons).map(([code, details]) => ({
-      code,
-      name: details.name || 'Unnamed Coupon',
-      description: details.description || '',
-      price: details.price || null,
-      tags: details.tags || [],
-      imageCode: details.imageCode || null
-    }));
+// Get short descriptions for better naming
+const shortDescriptions = couponCategories.shortCouponDescriptions || {};
+
+// Transform coupons into a more usable format
+const formattedCoupons = Object.entries(coupons).map(([code, details]) => {
+  // Try to get a better description from shortDescriptions
+  const shortDesc = shortDescriptions[code];
+  
+  return {
+    code,
+    name: details.name || details.Name || shortDesc?.description || 'Unnamed Coupon',
+    description: details.description || details.Description || shortDesc?.description || '',
+    price: details.price || details.Price || null,
+    tags: details.tags || details.Tags || [],
+    imageCode: details.imageCode || details.ImageCode || null
+  };
+});
+
+console.log(`Found ${formattedCoupons.length} coupons for store ${storeId}`);
 
     // Cache the result
     couponCache.set(storeId, {
@@ -135,17 +128,29 @@ exports.getMultipleStoreCoupons = async (req, res) => {
           }
 
           // Fetch from API
-          const storeApi = await new Store(storeId);
-          const coupons = storeApi.menu?.coupons || {};
-          
-          const formattedCoupons = Object.entries(coupons).map(([code, details]) => ({
-            code,
-            name: details.name || 'Unnamed Coupon',
-            description: details.description || '',
-            price: details.price || null,
-            tags: details.tags || [],
-            imageCode: details.imageCode || null
-          }));
+const storeApi = await new Store(storeId);
+
+// Extract coupons from the correct location
+let coupons = {};
+const couponCategories = storeApi.menu?.menu?.coupons || {};
+
+if (couponCategories.products) {
+  coupons = { ...coupons, ...couponCategories.products };
+}
+
+const shortDescriptions = couponCategories.shortCouponDescriptions || {};
+
+const formattedCoupons = Object.entries(coupons).map(([code, details]) => {
+  const shortDesc = shortDescriptions[code];
+  return {
+    code,
+    name: details.name || details.Name || shortDesc?.description || 'Unnamed Coupon',
+    description: details.description || details.Description || shortDesc?.description || '',
+    price: details.price || details.Price || null,
+    tags: details.tags || details.Tags || [],
+    imageCode: details.imageCode || details.ImageCode || null
+  };
+});
 
           // Cache the result
           couponCache.set(storeId, {
