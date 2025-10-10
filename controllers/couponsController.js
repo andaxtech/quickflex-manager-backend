@@ -36,9 +36,34 @@ exports.getStoreCoupons = async (req, res) => {
       });
     }
 
-    // Fetch from Domino's API
-    const store = await new Store(storeId);
-    const coupons = store.menu?.coupons || {};
+   // Fetch from Domino's API
+console.log('=== DEBUGGING STORE', storeId, '===');
+const store = await new Store(storeId);
+
+// Log what we got back
+console.log('1. Store object created:', !!store);
+console.log('2. Store.info exists:', !!store.info);
+console.log('3. Store.menu exists:', !!store.menu);
+
+if (store.info) {
+  console.log('4. Store Address:', store.info.AddressDescription);
+  console.log('5. Store Phone:', store.info.Phone);
+}
+
+if (store.menu) {
+  console.log('6. Menu keys:', Object.keys(store.menu));
+  console.log('7. Coupons object exists:', !!store.menu.coupons);
+  console.log('8. Number of coupons:', Object.keys(store.menu.coupons || {}).length);
+  
+  // Log first 3 coupon codes if any exist
+  if (store.menu.coupons) {
+    const couponCodes = Object.keys(store.menu.coupons).slice(0, 3);
+    console.log('9. Sample coupon codes:', couponCodes);
+  }
+}
+
+const coupons = store.menu?.coupons || {};
+console.log('=== END DEBUG ===');
     
     // Transform coupons into a more usable format
     const formattedCoupons = Object.entries(coupons).map(([code, details]) => ({
