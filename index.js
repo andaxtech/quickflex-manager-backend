@@ -1,10 +1,8 @@
 const express = require('express');
-
-
-
 const { Storage } = require('@google-cloud/storage');
 const cors = require('cors');
 const { Pool } = require('pg');
+const rateLimit = require('express-rate-limit');
 require('dotenv').config();
 
 // Initialize GCS with credentials from environment
@@ -34,6 +32,13 @@ const StoreIntelligenceService = require('./storeIntelligenceService');
 const app = express();
 app.use(cors());
 app.use(express.json());
+
+// Create rate limiter for coupon endpoints
+const couponLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 50, // limit each IP to 50 requests per windowMs
+  message: 'Too many coupon requests, please try again later'
+});
 
 // Configure multer for file uploads
 const multer = require('multer');
@@ -102,7 +107,9 @@ const pool = new Pool({
 const workflowRoutes = require('./routes/workflows')(pool);
 app.use('/api', workflowRoutes);
 
-
+// Add coupon routes with rate limiting
+const couponRoutes = require('./routes/coupons');
+app.use('/api/coupons', couponLimiter, couponRoutes);
 
 // Validate required API keys
 const requiredKeys = {
